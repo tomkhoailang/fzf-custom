@@ -45,18 +45,22 @@ func checkAscii(bytes []byte) (bool, int) {
 }
 
 // ToChars converts byte array into rune array
-func ToChars(bytes []byte) Chars {
-	inBytes, bytesUntil := checkAscii(bytes)
+func ToChars(bytesVal []byte) Chars {
+	checkBytes := bytesVal
+	if idx := bytes.Index(bytesVal, []byte("  ")); idx >= 0 {
+		checkBytes = bytesVal[idx+2:]
+	}
+	inBytes, bytesUntil := checkAscii(checkBytes)
 	if inBytes {
-		return Chars{slice: bytes, inBytes: inBytes}
+		return Chars{slice: bytesVal, inBytes: inBytes}
 	}
 
-	runes := make([]rune, bytesUntil, len(bytes))
+	runes := make([]rune, bytesUntil, len(bytesVal))
 	for i := range bytesUntil {
-		runes[i] = rune(bytes[i])
+		runes[i] = rune(bytesVal[i])
 	}
-	for i := bytesUntil; i < len(bytes); {
-		r, sz := utf8.DecodeRune(bytes[i:])
+	for i := bytesUntil; i < len(bytesVal); {
+		r, sz := utf8.DecodeRune(bytesVal[i:])
 		i += sz
 		runes = append(runes, r)
 	}
@@ -115,14 +119,37 @@ func (chars *Chars) Get(i int) rune {
 	if runes := chars.optionalRunes(); runes != nil {
 		return runes[i]
 	}
-	return rune(chars.slice[i])
+	bytesVal := chars.slice
+	hasNonAscii := false
+	for _, b := range bytesVal {
+		if b >= utf8.RuneSelf {
+			hasNonAscii = true
+			break
+		}
+	}
+	if !hasNonAscii {
+		return rune(bytesVal[i])
+	}
+	runes := chars.ToRunes()
+	return runes[i]
 }
 
 func (chars *Chars) Length() int {
 	if runes := chars.optionalRunes(); runes != nil {
 		return len(runes)
 	}
-	return len(chars.slice)
+	bytesVal := chars.slice
+	hasNonAscii := false
+	for _, b := range bytesVal {
+		if b >= utf8.RuneSelf {
+			hasNonAscii = true
+			break
+		}
+	}
+	if !hasNonAscii {
+		return len(bytesVal)
+	}
+	return utf8.RuneCount(bytesVal)
 }
 
 // String returns the string representation of a Chars object.
@@ -222,10 +249,27 @@ func (chars *Chars) ToRunes() []rune {
 	if runes := chars.optionalRunes(); runes != nil {
 		return runes
 	}
-	bytes := chars.slice
-	runes := make([]rune, len(bytes))
-	for idx, b := range bytes {
-		runes[idx] = rune(b)
+	bytesVal := chars.slice
+	hasNonAscii := false
+	for _, b := range bytesVal {
+		if b >= utf8.RuneSelf {
+			hasNonAscii = true
+			break
+		}
+	}
+	if !hasNonAscii {
+		runes := make([]rune, len(bytesVal))
+		for idx, b := range bytesVal {
+			runes[idx] = rune(b)
+		}
+		return runes
+	}
+
+	runes := make([]rune, 0, len(bytesVal))
+	for i := 0; i < len(bytesVal); {
+		r, sz := utf8.DecodeRune(bytesVal[i:])
+		i += sz
+		runes = append(runes, r)
 	}
 	return runes
 }
@@ -245,9 +289,8 @@ func (chars *Chars) CopyRunes(dest []rune, from int) {
 		copy(dest, runes[from:])
 		return
 	}
-	for idx, b := range chars.slice[from:][:len(dest)] {
-		dest[idx] = rune(b)
-	}
+	runes := chars.ToRunes()
+	copy(dest, runes[from:])
 }
 
 func (chars *Chars) Prepend(prefix string) {

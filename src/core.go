@@ -278,11 +278,20 @@ func Run(opts *Options) (int, error) {
 	var ingestionStart time.Time
 	if !streamingFilter {
 		reader = NewReader(func(data []byte) bool {
+			if opts.Scheme == "filename-first" {
+				if isMruFile(data) {
+					return true
+				}
+				data = formatLineWithIcon(data)
+			}
 			return chunkList.Push(data)
 		}, eventBox, executor, opts.ReadZero, opts.Filter == nil)
 
 		ingestionStart = time.Now()
 		readyChan := make(chan bool)
+		if opts.Scheme == "filename-first" {
+			pushMruFiles(chunkList)
+		}
 		go reader.ReadSource(opts.Input, opts.WalkerRoot, opts.WalkerOpts, opts.WalkerSkip, initialReload, initialEnv, readyChan)
 		<-readyChan
 	}

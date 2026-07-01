@@ -2,6 +2,7 @@
 package fzf
 
 import (
+	"bytes"
 	"fmt"
 	"maps"
 	"math"
@@ -86,6 +87,78 @@ func Run(opts *Options) (int, error) {
 	eventBox := util.NewEventBox()
 
 	// ANSI code processor
+	parseCustomAnsi := func(data []byte) (util.Chars, *[]ansiOffset, bool) {
+		if len(data) < 18 || data[0] != 0x1b || data[1] != '[' {
+			return util.Chars{}, nil, false
+		}
+		if len(data) < 8 || data[2] != '3' || data[3] != '8' || data[4] != ';' || data[5] != '5' || data[6] != ';' {
+			return util.Chars{}, nil, false
+		}
+		i := 7
+		color := 0
+		for i < len(data) && data[i] >= '0' && data[i] <= '9' {
+			color = color*10 + int(data[i] - '0')
+			i++
+		}
+		if i >= len(data) || data[i] != 'm' {
+			return util.Chars{}, nil, false
+		}
+		i++
+		if i+3 >= len(data) {
+			return util.Chars{}, nil, false
+		}
+		iconBytes := data[i : i+3]
+		i += 3
+		if i+4 > len(data) || data[i] != 0x1b || data[i+1] != '[' || data[i+2] != '0' || data[i+3] != 'm' {
+			return util.Chars{}, nil, false
+		}
+		i += 4
+		if i+2 > len(data) || data[i] != ' ' || data[i+1] != ' ' {
+			return util.Chars{}, nil, false
+		}
+		i += 2
+		filenameStart := i
+		secondSep := bytes.Index(data[filenameStart:], []byte("  "))
+		if secondSep < 0 {
+			if len(data) < filenameStart+2 || data[len(data)-2] != ' ' || data[len(data)-1] != ' ' {
+				return util.Chars{}, nil, false
+			}
+			filename := data[filenameStart : len(data)-2]
+			clean := make([]byte, 3 + 2 + len(filename) + 2)
+			copy(clean[0:3], iconBytes)
+			copy(clean[3:5], "  ")
+			copy(clean[5:5+len(filename)], filename)
+			copy(clean[5+len(filename):], "  ")
+			offsets := []ansiOffset{
+				{offset: [2]int32{0, 1}, color: ansiState{fg: tui.Color(color), bg: -1, ul: -1}},
+			}
+			return util.ToChars(clean), &offsets, true
+		}
+		filename := data[filenameStart : filenameStart+secondSep]
+		dirPart := data[filenameStart+secondSep+2:]
+		if len(dirPart) < 15 || dirPart[0] != 0x1b || dirPart[1] != '[' || dirPart[2] != '3' || dirPart[3] != '8' || dirPart[4] != ';' || dirPart[5] != '5' || dirPart[6] != ';' || dirPart[7] != '2' || dirPart[8] != '4' || dirPart[9] != '4' || dirPart[10] != ';' || dirPart[11] != '3' || dirPart[12] != 'm' {
+			return util.Chars{}, nil, false
+		}
+		if dirPart[len(dirPart)-4] != 0x1b || dirPart[len(dirPart)-3] != '[' || dirPart[len(dirPart)-2] != '0' || dirPart[len(dirPart)-1] != 'm' {
+			return util.Chars{}, nil, false
+		}
+		dir := dirPart[13 : len(dirPart)-4]
+		clean := make([]byte, 3 + 2 + len(filename) + 2 + len(dir))
+		copy(clean[0:3], iconBytes)
+		copy(clean[3:5], "  ")
+		copy(clean[5:5+len(filename)], filename)
+		copy(clean[5+len(filename):7+len(filename)], "  ")
+		copy(clean[7+len(filename):], dir)
+		filenameLen := len(filename)
+		dirLen := len(dir)
+		offsets := []ansiOffset{
+			{offset: [2]int32{0, 1}, color: ansiState{fg: tui.Color(color), bg: -1, ul: -1}},
+			{offset: [2]int32{1, int32(5 + filenameLen)}, color: ansiState{fg: -1, bg: -1, ul: -1}},
+			{offset: [2]int32{int32(5 + filenameLen), int32(5 + filenameLen + dirLen)}, color: ansiState{fg: 244, bg: -1, ul: -1, attr: tui.Italic}},
+		}
+		return util.ToChars(clean), &offsets, true
+	}
+
 	ansiProcessor := func(data []byte) (util.Chars, *[]ansiOffset) {
 		return util.ToChars(data), nil
 	}
@@ -93,6 +166,9 @@ func Run(opts *Options) (int, error) {
 	var lineAnsiState, prevLineAnsiState *ansiState
 	if opts.Ansi {
 		ansiProcessor = func(data []byte) (util.Chars, *[]ansiOffset) {
+			if clean, offsets, ok := parseCustomAnsi(data); ok {
+				return clean, offsets
+			}
 			prevLineAnsiState = lineAnsiState
 			trimmed, offsets, newState := extractColor(byteString(data), lineAnsiState, nil)
 			lineAnsiState = newState

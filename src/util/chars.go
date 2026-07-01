@@ -128,9 +128,15 @@ func (chars *Chars) Get(i int) rune {
 		}
 	}
 	if !hasNonAscii {
+		if i < 0 || i >= len(bytesVal) {
+			return 0
+		}
 		return rune(bytesVal[i])
 	}
 	runes := chars.ToRunes()
+	if i < 0 || i >= len(runes) {
+		return 0
+	}
 	return runes[i]
 }
 
@@ -138,18 +144,7 @@ func (chars *Chars) Length() int {
 	if runes := chars.optionalRunes(); runes != nil {
 		return len(runes)
 	}
-	bytesVal := chars.slice
-	hasNonAscii := false
-	for _, b := range bytesVal {
-		if b >= utf8.RuneSelf {
-			hasNonAscii = true
-			break
-		}
-	}
-	if !hasNonAscii {
-		return len(bytesVal)
-	}
-	return utf8.RuneCount(bytesVal)
+	return len(chars.slice)
 }
 
 // String returns the string representation of a Chars object.

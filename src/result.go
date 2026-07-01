@@ -6,6 +6,7 @@ import (
 	"sort"
 	"unicode"
 
+	"github.com/junegunn/fzf/src/algo"
 	"github.com/junegunn/fzf/src/tui"
 	"github.com/junegunn/fzf/src/util"
 )
@@ -55,6 +56,69 @@ func buildResult(item *Item, offsets []Offset, score int) Result {
 func buildResultFromBounds(item *Item, score int, minBegin, minEnd, maxEnd int, validOffsetFound bool) Result {
 	result := Result{item: item}
 	numChars := item.text.Length()
+
+	// For filename-first scheme with empty queries (score == 0),
+	// compute MRU + short-name score for deterministic ordering
+	if algo.CurrentScheme == "filename-first" && score == 0 {
+		text := item.text.ToString()
+
+		// The C formatter outputs: icon  filename  dir
+		// Find the first "  " (icon separator), then the second "  " (filename/dir separator)
+		firstSep := -1
+		secondSep := -1
+		for i := 0; i < len(text)-1; i++ {
+			if text[i] == ' ' && text[i+1] == ' ' {
+				if firstSep == -1 {
+					firstSep = i
+				} else {
+					secondSep = i
+					break
+				}
+			}
+		}
+
+		var filename, dir string
+		if firstSep >= 0 && secondSep >= 0 {
+			filename = text[firstSep+2 : secondSep]
+			dir = text[secondSep+2:]
+		} else if firstSep >= 0 {
+			filename = text[firstSep+2:]
+		} else {
+			filename = text
+		}
+
+		// Strip ANSI codes from dir for MRU path matching
+		cleanDir := ""
+		for i := 0; i < len(dir); i++ {
+			if dir[i] == '\033' {
+				// Skip until 'm'
+				for i < len(dir) && dir[i] != 'm' {
+					i++
+				}
+				continue
+			}
+			cleanDir += string(dir[i])
+		}
+
+		var path string
+		if cleanDir != "" {
+			path = cleanDir + "/" + filename
+		} else {
+			path = filename
+		}
+
+		score = 40000
+		shortBonus := 500 - len(filename)
+		if shortBonus < 0 {
+			shortBonus = 0
+		}
+		score += shortBonus
+
+		if mruRank, ok := algo.MruMap[path]; ok {
+			decay := 1.0 + float64(mruRank-1)*0.1
+			score += int(10000.0 / decay)
+		}
+	}
 
 	for idx, criterion := range sortCriteria {
 		val := uint16(math.MaxUint16)

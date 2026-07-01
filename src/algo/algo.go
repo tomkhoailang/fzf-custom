@@ -605,10 +605,7 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 	lenDir := len(dir)
 	if pos != nil {
 		for _, p := range *pos {
-			if lenDir == 0 {
-				isFilenameMatch = true
-				isDirMatch = false
-			} else if p < lenDir {
+			if p < lenDir {
 				isFilenameMatch = false
 			} else if p > lenDir {
 				isDirMatch = false
@@ -623,9 +620,7 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 	if pos != nil {
 		mappedPos := make([]int, len(*pos))
 		for idx, p := range *pos {
-			if lenDir == 0 {
-				mappedPos[idx] = startOfFilename + p
-			} else if p < lenDir {
+			if p < lenDir {
 				mappedPos[idx] = startOfDir + p
 			} else if p > lenDir {
 				mappedPos[idx] = startOfFilename + (p - lenDir - 1)

@@ -450,92 +450,69 @@ func debugV2(T []rune, pattern []rune, F []int32, lastIdx int, H []int16, C []in
 	}
 }
 
-// splitIconFilenameDir finds three regions in "icon  filename  dir" format.
-// Returns: startOfFilename, endOfFilename, startOfDir
-// If no double-space is found, returns (0, n, n) treating everything as filename.
-func splitIconFilenameDir(input *util.Chars) (int, int, int) {
+func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool, input *util.Chars, pattern []rune, withPos bool, slab *util.Slab) (Result, *[]int) {
+	// Single-pass: find first and last double-space in one forward scan
 	n := input.Length()
 	firstSep := -1
 	lastSep := -1
-
-	// Find first double-space (icon separator)
 	for i := 0; i < n-1; i++ {
 		if input.Get(i) == ' ' && input.Get(i+1) == ' ' {
-			firstSep = i
-			break
-		}
-	}
-	// Find last double-space (filename/dir separator)
-	for i := n - 2; i >= 0; i-- {
-		if input.Get(i) == ' ' && input.Get(i+1) == ' ' {
+			if firstSep < 0 {
+				firstSep = i
+			}
 			lastSep = i
-			break
 		}
 	}
 
+	// Determine regions
+	var startOfFilename, endOfFilename, startOfDir int
 	if firstSep < 0 {
-		// No double-space at all
-		return 0, n, n
-	}
-	if firstSep == lastSep {
-		// Only one double-space: "icon  filename" (no dir)
-		return firstSep + 2, n, n
-	}
-	// Two different double-spaces: "icon  filename  dir"
-	return firstSep + 2, lastSep, lastSep + 2
-}
-
-func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool, input *util.Chars, pattern []rune, withPos bool, slab *util.Slab) (Result, *[]int) {
-	startOfFilename, endOfFilename, startOfDir := splitIconFilenameDir(input)
-	if startOfFilename == 0 && endOfFilename == input.Length() {
+		// No icon separator — plain text, fall back to standard match
 		return fuzzyMatchV2Internal(caseSensitive, normalize, forward, input, pattern, withPos, slab)
+	} else if firstSep == lastSep {
+		// "icon  filename" (no dir)
+		startOfFilename = firstSep + 2
+		endOfFilename = n
+		startOfDir = n
+	} else {
+		// "icon  filename  dir"
+		startOfFilename = firstSep + 2
+		endOfFilename = lastSep
+		startOfDir = lastSep + 2
 	}
 
 	filenameChars := input.Slice(startOfFilename, endOfFilename)
-	var dirChars util.Chars
-	if startOfDir < input.Length() {
-		dirChars = input.Slice(startOfDir, input.Length())
-	}
+	filenameLen := endOfFilename - startOfFilename
 
-	filename := filenameChars.ToString()
-	dir := ""
-	if startOfDir < input.Length() {
-		dir = dirChars.ToString()
-	}
-
-	var path string
-	if dir != "" {
-		path = dir + "/" + filename
-	} else {
-		path = filename
-	}
-
-	// MRU recency boost: rank 1 → 10000, rank 2 → 9091, ..., rank 10 → 5000
+	// MRU boost — only compute path string if MruMap has entries
 	mruBoost := 0
-	if mruRank, ok := MruMap[path]; ok {
-		decay := 1.0 + float64(mruRank-1)*0.1
-		mruBoost = int(10000.0 / decay)
+	if len(MruMap) > 0 {
+		var path string
+		if startOfDir < n {
+			dirChars := input.Slice(startOfDir, n)
+			path = dirChars.ToString() + "/" + filenameChars.ToString()
+		} else {
+			path = filenameChars.ToString()
+		}
+		if mruRank, ok := MruMap[path]; ok {
+			decay := 1.0 + float64(mruRank-1)*0.1
+			mruBoost = int(10000.0 / decay)
+		}
 	}
 
 	// Shorter filename bonus (max ~500)
-	shortBonus := 500 - len(filename)
+	shortBonus := 500 - filenameLen
 	if shortBonus < 0 {
 		shortBonus = 0
 	}
 
-	// Handle empty query: all items "match" with MRU + short name ordering
+	// Handle empty query
 	if len(pattern) == 0 {
 		score := 40000 + mruBoost + shortBonus
 		return Result{0, 0, score}, posArray(withPos, 0)
 	}
 
 	// ── Scoring tiers (all fit within uint16 max 65535) ──
-	// Tier layout:
-	//   Exact filename match:  60000 + matchScore + mruBoost + shortBonus
-	//   Prefix filename match: 50000 + matchScore + mruBoost + shortBonus
-	//   Filename match:        40000 + matchScore + mruBoost + shortBonus
-	//   Full path match:       25000 + matchScore + mruBoost + shortBonus
-	//   Dir-only match:        15000 + matchScore + mruBoost + shortBonus
 
 	// 1. Try filename match (Tier 1: 40000+)
 	if res, pos := fuzzyMatchV2Internal(caseSensitive, normalize, forward, &filenameChars, pattern, withPos, slab); res.Start >= 0 {
@@ -545,26 +522,53 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 		}
 		score := 40000 + matchScore + mruBoost + shortBonus
 
-		filenameLower := strings.ToLower(filename)
-		patStrLower := strings.ToLower(string(pattern))
-
-		// Prefix match bonus → tier 50000
-		if strings.HasPrefix(filenameLower, patStrLower) {
-			score += 10000
+		// Case-insensitive prefix check using runes directly (no string alloc)
+		patLen := len(pattern)
+		if patLen <= filenameLen {
+			isPrefix := true
+			for j := 0; j < patLen; j++ {
+				fc := filenameChars.Get(j)
+				pc := pattern[j]
+				if fc >= 'A' && fc <= 'Z' {
+					fc += 32
+				}
+				if pc >= 'A' && pc <= 'Z' {
+					pc += 32
+				}
+				if fc != pc {
+					isPrefix = false
+					break
+				}
+			}
+			if isPrefix {
+				score += 10000 // Prefix bonus → tier 50000
+				if patLen == filenameLen || (patLen < filenameLen && filenameChars.Get(patLen) == '.') {
+					// Exact match (with or without extension)
+					isExact := true
+					if patLen == filenameLen {
+						// perfect match
+					} else {
+						// Check "pattern.ext" — pattern matches basename before extension
+						// Only count as exact if pattern == filename without extension
+						isExact = false
+						for j := patLen; j < filenameLen; j++ {
+							if filenameChars.Get(j) == '.' {
+								isExact = true
+								break
+							}
+						}
+					}
+					if isExact && patLen == filenameLen {
+						score += 10000 // Exact bonus → tier 60000
+					}
+				}
+			}
 		}
 
-		// Exact match bonus → tier 60000
-		if filenameLower == patStrLower {
-			score += 10000
-		}
-
-		// Clamp to uint16 max
 		if score > 65535 {
 			score = 65535
 		}
-
 		res.Score = score
-		// Offset positions by startOfFilename (to account for icon prefix)
 		res.Start += startOfFilename
 		res.End += startOfFilename
 		if pos != nil {
@@ -576,8 +580,7 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 	}
 
 	// 2. Try full path match (Tier 2: 25000+)
-	// Match against the portion of input from startOfFilename onward (excluding icon)
-	pathChars := input.Slice(startOfFilename, input.Length())
+	pathChars := input.Slice(startOfFilename, n)
 	if res, pos := fuzzyMatchV2Internal(caseSensitive, normalize, forward, &pathChars, pattern, withPos, slab); res.Start >= 0 {
 		matchScore := res.Score
 		if matchScore > 5000 {
@@ -587,9 +590,7 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 		if score > 65535 {
 			score = 65535
 		}
-
 		res.Score = score
-		// Offset positions by startOfFilename
 		res.Start += startOfFilename
 		res.End += startOfFilename
 		if pos != nil {
@@ -601,7 +602,8 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 	}
 
 	// 3. Try directory-only match (Tier 3: 15000+)
-	if startOfDir < input.Length() {
+	if startOfDir < n {
+		dirChars := input.Slice(startOfDir, n)
 		if res, pos := fuzzyMatchV2Internal(caseSensitive, normalize, forward, &dirChars, pattern, withPos, slab); res.Start >= 0 {
 			matchScore := res.Score
 			if matchScore > 5000 {
@@ -611,7 +613,6 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 			if score > 65535 {
 				score = 65535
 			}
-
 			res.Score = score
 			res.Start += startOfDir
 			res.End += startOfDir

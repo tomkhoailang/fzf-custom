@@ -450,13 +450,13 @@ func debugV2(T []rune, pattern []rune, F []int32, lastIdx int, H []int16, C []in
 	}
 }
 
-func getMruBoost(filenameChars util.Chars, startOfDir int, n int, input *util.Chars) int {
+func getMruBoost(filenameChars util.Chars, startOfDir int, endIdx int, input *util.Chars) int {
 	if len(MruMap) == 0 {
 		return 0
 	}
 	var path string
-	if startOfDir < n {
-		dirChars := input.Slice(startOfDir, n)
+	if startOfDir < endIdx {
+		dirChars := input.Slice(startOfDir, endIdx)
 		path = dirChars.ToString() + "/" + filenameChars.ToString()
 	} else {
 		path = filenameChars.ToString()
@@ -470,13 +470,17 @@ func getMruBoost(filenameChars util.Chars, startOfDir int, n int, input *util.Ch
 
 func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool, input *util.Chars, pattern []rune, withPos bool, slab *util.Slab) (Result, *[]int) {
 	n := input.Length()
+	endOfLine := n
+	if input.IsBytes() {
+		endOfLine = len(input.Bytes())
+	}
 	firstSep := -1
 	lastSep := -1
 
 	// Fast path for ASCII: directly scan slice bytes instead of calling Get()
 	if input.IsBytes() {
 		slice := input.Bytes()
-		for i := 0; i < n-1; i++ {
+		for i := 0; i < len(slice)-1; i++ {
 			if slice[i] == ' ' && slice[i+1] == ' ' {
 				if firstSep < 0 {
 					firstSep = i
@@ -503,8 +507,8 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 	} else if firstSep == lastSep {
 		// "icon  filename" (no dir)
 		startOfFilename = firstSep + 2
-		endOfFilename = n
-		startOfDir = n
+		endOfFilename = endOfLine
+		startOfDir = endOfLine
 	} else {
 		// "icon  filename  dir"
 		startOfFilename = firstSep + 2
@@ -517,7 +521,7 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 
 	// Handle empty query early (no match required)
 	if len(pattern) == 0 {
-		mruBoost := getMruBoost(filenameChars, startOfDir, n, input)
+		mruBoost := getMruBoost(filenameChars, startOfDir, endOfLine, input)
 		shortBonus := 500 - filenameLen
 		if shortBonus < 0 {
 			shortBonus = 0
@@ -528,7 +532,7 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 
 	// Quick check: does the path (excluding icon) contain all query characters?
 	// If not, we can instantly discard the item (saves doing 2-3 matching/scan loops).
-	pathChars := input.Slice(startOfFilename, n)
+	pathChars := input.Slice(startOfFilename, endOfLine)
 	if minIdx, _ := asciiFuzzyIndex(&pathChars, pattern, caseSensitive); minIdx < 0 {
 		return Result{-1, -1, 0}, nil
 	}
@@ -543,7 +547,7 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 		}
 
 		// Lazy MRU and short filename bonus (only computed when match succeeds!)
-		mruBoost := getMruBoost(filenameChars, startOfDir, n, input)
+		mruBoost := getMruBoost(filenameChars, startOfDir, endOfLine, input)
 		shortBonus := 500 - filenameLen
 		if shortBonus < 0 {
 			shortBonus = 0
@@ -642,7 +646,7 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 			matchScore = 5000
 		}
 
-		mruBoost := getMruBoost(filenameChars, startOfDir, n, input)
+		mruBoost := getMruBoost(filenameChars, startOfDir, endOfLine, input)
 		shortBonus := 500 - filenameLen
 		if shortBonus < 0 {
 			shortBonus = 0
@@ -664,15 +668,15 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 	}
 
 	// 3. Try directory-only match (Tier 3: 15000+)
-	if startOfDir < n {
-		dirChars := input.Slice(startOfDir, n)
+	if startOfDir < endOfLine {
+		dirChars := input.Slice(startOfDir, endOfLine)
 		if res, pos := fuzzyMatchV2Internal(caseSensitive, normalize, forward, &dirChars, pattern, withPos, slab); res.Start >= 0 {
 			matchScore := res.Score
 			if matchScore > 5000 {
 				matchScore = 5000
 			}
 
-			mruBoost := getMruBoost(filenameChars, startOfDir, n, input)
+			mruBoost := getMruBoost(filenameChars, startOfDir, endOfLine, input)
 			shortBonus := 500 - filenameLen
 			if shortBonus < 0 {
 				shortBonus = 0

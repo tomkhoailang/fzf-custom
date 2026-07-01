@@ -120,12 +120,13 @@ func buildResultFromBounds(item *Item, score int, minBegin, minEnd, maxEnd int, 
 		}
 	}
 
+
 	for idx, criterion := range sortCriteria {
 		val := uint16(math.MaxUint16)
 		switch criterion {
 		case byScore:
 			// Higher is better
-			val = math.MaxUint16 - util.AsUint16(score)
+			val = math.MaxUint16 - util.AsUint16(score >> 2)
 		case byChunk:
 			if validOffsetFound {
 				b := minBegin

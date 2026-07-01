@@ -519,6 +519,68 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 	filenameChars := input.Slice(startOfFilename, endOfFilename)
 	filenameLen := endOfFilename - startOfFilename
 
+	filename := (&filenameChars).ToString()
+	dir := ""
+	if startOfDir < endOfLine {
+		dirChars := input.Slice(startOfDir, endOfLine)
+		dir = (&dirChars).ToString()
+	}
+	path := filename
+	if dir != "" {
+		path = dir + "/" + filename
+	}
+
+	InitNeural()
+	if NeuralNet != nil {
+		var virtualMatchScore float32 = 0
+		var matchScore float32 = 0
+		pathChars := input.Slice(startOfFilename, endOfLine)
+		var minIdx, maxIdx int = -1, -1
+
+		if len(pattern) > 0 {
+			minIdx, maxIdx = asciiFuzzyIndex(&pathChars, pattern, caseSensitive)
+			if minIdx < 0 {
+				return Result{-1, -1, 0}, nil
+			}
+
+			// Compute match score of the full path
+			if resPath, _ := fuzzyMatchV2InternalWithRange(caseSensitive, normalize, forward, &pathChars, pattern, false, slab, minIdx, maxIdx); resPath.Start >= 0 {
+				matchScore = float32(resPath.Score)
+			}
+
+			// Compute virtual match score
+			vname := getVirtualName(path)
+			vnameChars := util.ToChars([]byte(vname))
+			if resVN, _ := fuzzyMatchV2Internal(caseSensitive, normalize, forward, &vnameChars, pattern, false, slab); resVN.Start >= 0 {
+				virtualMatchScore = float32(resVN.Score)
+			}
+		}
+
+		neuralScore := CalculateNeuralScore(path, matchScore, virtualMatchScore)
+		finalScore := int(neuralScore * 1000000)
+
+		var res Result
+		var pos *[]int
+		if len(pattern) > 0 {
+			res, pos = fuzzyMatchV2InternalWithRange(caseSensitive, normalize, forward, &pathChars, pattern, withPos, slab, minIdx, maxIdx)
+			if res.Start >= 0 {
+				res.Start += startOfFilename
+				res.End += startOfFilename
+				if pos != nil {
+					for idx := range *pos {
+						(*pos)[idx] += startOfFilename
+					}
+				}
+			}
+		} else {
+			res = Result{0, 0, finalScore}
+			pos = posArray(withPos, 0)
+		}
+
+		res.Score = finalScore
+		return res, pos
+	}
+
 	// Handle empty query early (no match required)
 	if len(pattern) == 0 {
 		mruBoost := getMruBoost(filenameChars, startOfDir, endOfLine, input)

@@ -499,6 +499,30 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 		}
 	}
 
+	// Adjust lastSep if contiguous space run
+	if lastSep > 0 && firstSep >= 0 {
+		isContiguous := true
+		if input.IsBytes() {
+			slice := input.Bytes()
+			for i := firstSep; i <= lastSep+1; i++ {
+				if i < len(slice) && slice[i] != ' ' {
+					isContiguous = false
+					break
+				}
+			}
+		} else {
+			for i := firstSep; i <= lastSep+1; i++ {
+				if i < n && input.Get(i) != ' ' {
+					isContiguous = false
+					break
+				}
+			}
+		}
+		if isContiguous {
+			lastSep = firstSep
+		}
+	}
+
 	// Determine regions
 	var startOfFilename, endOfFilename, startOfDir int
 	if firstSep < 0 {
@@ -506,12 +530,32 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 		return fuzzyMatchV2Internal(caseSensitive, normalize, forward, input, pattern, withPos, slab)
 	} else if firstSep == lastSep {
 		// "icon  filename" (no dir)
-		startOfFilename = firstSep + 2
+		startOfFilename = firstSep
+		if input.IsBytes() {
+			slice := input.Bytes()
+			for startOfFilename < endOfLine && slice[startOfFilename] == ' ' {
+				startOfFilename++
+			}
+		} else {
+			for startOfFilename < n && input.Get(startOfFilename) == ' ' {
+				startOfFilename++
+			}
+		}
 		endOfFilename = endOfLine
 		startOfDir = endOfLine
 	} else {
 		// "icon  filename  dir"
-		startOfFilename = firstSep + 2
+		startOfFilename = firstSep
+		if input.IsBytes() {
+			slice := input.Bytes()
+			for startOfFilename < endOfLine && slice[startOfFilename] == ' ' {
+				startOfFilename++
+			}
+		} else {
+			for startOfFilename < n && input.Get(startOfFilename) == ' ' {
+				startOfFilename++
+			}
+		}
 		endOfFilename = lastSep
 		startOfDir = lastSep + 2
 	}

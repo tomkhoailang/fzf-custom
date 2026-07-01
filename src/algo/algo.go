@@ -450,17 +450,48 @@ func debugV2(T []rune, pattern []rune, F []int32, lastIdx int, H []int16, C []in
 	}
 }
 
+func getMruBoost(filenameChars util.Chars, startOfDir int, n int, input *util.Chars) int {
+	if len(MruMap) == 0 {
+		return 0
+	}
+	var path string
+	if startOfDir < n {
+		dirChars := input.Slice(startOfDir, n)
+		path = dirChars.ToString() + "/" + filenameChars.ToString()
+	} else {
+		path = filenameChars.ToString()
+	}
+	if mruRank, ok := MruMap[path]; ok {
+		decay := 1.0 + float64(mruRank-1)*0.1
+		return int(10000.0 / decay)
+	}
+	return 0
+}
+
 func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool, input *util.Chars, pattern []rune, withPos bool, slab *util.Slab) (Result, *[]int) {
-	// Single-pass: find first and last double-space in one forward scan
 	n := input.Length()
 	firstSep := -1
 	lastSep := -1
-	for i := 0; i < n-1; i++ {
-		if input.Get(i) == ' ' && input.Get(i+1) == ' ' {
-			if firstSep < 0 {
-				firstSep = i
+
+	// Fast path for ASCII: directly scan slice bytes instead of calling Get()
+	if input.IsBytes() {
+		slice := input.Bytes()
+		for i := 0; i < n-1; i++ {
+			if slice[i] == ' ' && slice[i+1] == ' ' {
+				if firstSep < 0 {
+					firstSep = i
+				}
+				lastSep = i
 			}
-			lastSep = i
+		}
+	} else {
+		for i := 0; i < n-1; i++ {
+			if input.Get(i) == ' ' && input.Get(i+1) == ' ' {
+				if firstSep < 0 {
+					firstSep = i
+				}
+				lastSep = i
+			}
 		}
 	}
 
@@ -484,35 +515,18 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 	filenameChars := input.Slice(startOfFilename, endOfFilename)
 	filenameLen := endOfFilename - startOfFilename
 
-	// MRU boost — only compute path string if MruMap has entries
-	mruBoost := 0
-	if len(MruMap) > 0 {
-		var path string
-		if startOfDir < n {
-			dirChars := input.Slice(startOfDir, n)
-			path = dirChars.ToString() + "/" + filenameChars.ToString()
-		} else {
-			path = filenameChars.ToString()
-		}
-		if mruRank, ok := MruMap[path]; ok {
-			decay := 1.0 + float64(mruRank-1)*0.1
-			mruBoost = int(10000.0 / decay)
-		}
-	}
-
-	// Shorter filename bonus (max ~500)
-	shortBonus := 500 - filenameLen
-	if shortBonus < 0 {
-		shortBonus = 0
-	}
-
-	// Handle empty query
+	// Handle empty query early (no match required)
 	if len(pattern) == 0 {
+		mruBoost := getMruBoost(filenameChars, startOfDir, n, input)
+		shortBonus := 500 - filenameLen
+		if shortBonus < 0 {
+			shortBonus = 0
+		}
 		score := 40000 + mruBoost + shortBonus
 		return Result{0, 0, score}, posArray(withPos, 0)
 	}
 
-	// ── Scoring tiers (all fit within uint16 max 65535) ──
+	// ── Scoring tiers ──
 
 	// 1. Try filename match (Tier 1: 40000+)
 	if res, pos := fuzzyMatchV2Internal(caseSensitive, normalize, forward, &filenameChars, pattern, withPos, slab); res.Start >= 0 {
@@ -520,26 +534,52 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 		if matchScore > 5000 {
 			matchScore = 5000
 		}
+
+		// Lazy MRU and short filename bonus (only computed when match succeeds!)
+		mruBoost := getMruBoost(filenameChars, startOfDir, n, input)
+		shortBonus := 500 - filenameLen
+		if shortBonus < 0 {
+			shortBonus = 0
+		}
 		score := 40000 + matchScore + mruBoost + shortBonus
 
 		// Case-insensitive prefix check using runes directly (no string alloc)
 		patLen := len(pattern)
 		if patLen <= filenameLen {
 			isPrefix := true
-			for j := 0; j < patLen; j++ {
-				fc := filenameChars.Get(j)
-				pc := pattern[j]
-				if fc >= 'A' && fc <= 'Z' {
-					fc += 32
+			if filenameChars.IsBytes() {
+				slice := filenameChars.Bytes()
+				for j := 0; j < patLen; j++ {
+					fc := rune(slice[j])
+					pc := pattern[j]
+					if fc >= 'A' && fc <= 'Z' {
+						fc += 32
+					}
+					if pc >= 'A' && pc <= 'Z' {
+						pc += 32
+					}
+					if fc != pc {
+						isPrefix = false
+						break
+					}
 				}
-				if pc >= 'A' && pc <= 'Z' {
-					pc += 32
-				}
-				if fc != pc {
-					isPrefix = false
-					break
+			} else {
+				for j := 0; j < patLen; j++ {
+					fc := filenameChars.Get(j)
+					pc := pattern[j]
+					if fc >= 'A' && fc <= 'Z' {
+						fc += 32
+					}
+					if pc >= 'A' && pc <= 'Z' {
+						pc += 32
+					}
+					if fc != pc {
+						isPrefix = false
+						break
+					}
 				}
 			}
+
 			if isPrefix {
 				score += 10000 // Prefix bonus → tier 50000
 				if patLen == filenameLen || (patLen < filenameLen && filenameChars.Get(patLen) == '.') {
@@ -549,12 +589,21 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 						// perfect match
 					} else {
 						// Check "pattern.ext" — pattern matches basename before extension
-						// Only count as exact if pattern == filename without extension
 						isExact = false
-						for j := patLen; j < filenameLen; j++ {
-							if filenameChars.Get(j) == '.' {
-								isExact = true
-								break
+						if filenameChars.IsBytes() {
+							slice := filenameChars.Bytes()
+							for j := patLen; j < filenameLen; j++ {
+								if slice[j] == '.' {
+									isExact = true
+									break
+								}
+							}
+						} else {
+							for j := patLen; j < filenameLen; j++ {
+								if filenameChars.Get(j) == '.' {
+									isExact = true
+									break
+								}
 							}
 						}
 					}
@@ -586,7 +635,14 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 		if matchScore > 5000 {
 			matchScore = 5000
 		}
+
+		mruBoost := getMruBoost(filenameChars, startOfDir, n, input)
+		shortBonus := 500 - filenameLen
+		if shortBonus < 0 {
+			shortBonus = 0
+		}
 		score := 25000 + matchScore + mruBoost + shortBonus
+
 		if score > 65535 {
 			score = 65535
 		}
@@ -609,7 +665,14 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 			if matchScore > 5000 {
 				matchScore = 5000
 			}
+
+			mruBoost := getMruBoost(filenameChars, startOfDir, n, input)
+			shortBonus := 500 - filenameLen
+			if shortBonus < 0 {
+				shortBonus = 0
+			}
 			score := 15000 + matchScore + mruBoost + shortBonus
+
 			if score > 65535 {
 				score = 65535
 			}

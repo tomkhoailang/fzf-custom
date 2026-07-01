@@ -230,6 +230,16 @@ func (chars *Chars) ToRunes() []rune {
 	return runes
 }
 
+func (chars Chars) Slice(start, end int) Chars {
+	if chars.inBytes {
+		return Chars{slice: chars.slice[start:end], inBytes: true}
+	}
+	runes := *(*[]rune)(unsafe.Pointer(&chars.slice))
+	subRunes := runes[start:end]
+	return Chars{slice: *(*[]byte)(unsafe.Pointer(&subRunes)), inBytes: false}
+}
+
+
 func (chars *Chars) CopyRunes(dest []rune, from int) {
 	if runes := chars.optionalRunes(); runes != nil {
 		copy(dest, runes[from:])

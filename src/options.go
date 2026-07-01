@@ -1342,8 +1342,10 @@ func parseScheme(str string) (string, []criterion, error) {
 		return str, []criterion{byScore, byPathname, byLength}, nil
 	case "default":
 		return str, []criterion{byScore, byLength}, nil
+	case "filename-first":
+		return str, []criterion{byScore, byLength}, nil
 	}
-	return str, nil, errors.New("invalid scoring scheme: " + str + " (expected: default|path|history)")
+	return str, nil, errors.New("invalid scoring scheme: " + str + " (expected: default|path|history|filename-first)")
 }
 
 func parseTiebreak(str string) ([]criterion, error) {

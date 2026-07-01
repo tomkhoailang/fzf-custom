@@ -173,9 +173,25 @@ const (
 	charNumber
 )
 
+var (
+	CurrentScheme string
+	MruMap        map[string]int
+)
+
 func Init(scheme string) bool {
+	CurrentScheme = scheme
+	if MruMap == nil {
+		MruMap = make(map[string]int)
+		mruEnv := os.Getenv("FZF_MRU_LIST")
+		if mruEnv != "" {
+			parts := strings.Split(mruEnv, ";")
+			for idx, file := range parts {
+				MruMap[file] = idx + 1
+			}
+		}
+	}
 	switch scheme {
-	case "default":
+	case "default", "filename-first":
 		bonusBoundaryWhite = bonusBoundary + 2
 		bonusBoundaryDelimiter = bonusBoundary + 1
 	case "path":
@@ -425,7 +441,119 @@ func debugV2(T []rune, pattern []rune, F []int32, lastIdx int, H []int16, C []in
 	}
 }
 
+func splitFilenameDir(input *util.Chars) (int, int) {
+	n := input.Length()
+	for i := 0; i < n-1; i++ {
+		if input.Get(i) == ' ' && input.Get(i+1) == ' ' {
+			return i, i + 2
+		}
+	}
+	return n, n
+}
+
+func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool, input *util.Chars, pattern []rune, withPos bool, slab *util.Slab) (Result, *[]int) {
+	endOfFilename, startOfDir := splitFilenameDir(input)
+	if endOfFilename == input.Length() {
+		return fuzzyMatchV2Internal(caseSensitive, normalize, forward, input, pattern, withPos, slab)
+	}
+
+	filenameChars := input.Slice(0, endOfFilename)
+	dirChars := input.Slice(startOfDir, input.Length())
+
+	filename := filenameChars.ToString()
+	dir := dirChars.ToString()
+
+	var path string
+	if dir != "" {
+		path = dir + "/" + filename
+	} else {
+		path = filename
+	}
+
+	// 1. Try filename match (Tier 1)
+	if res, pos := fuzzyMatchV2Internal(caseSensitive, normalize, forward, &filenameChars, pattern, withPos, slab); res.Start >= 0 {
+		score := res.Score
+		// Additive Tier Offset: 1 Trillion
+		score += 1000000000000
+		// Shorter filename tie-breaker
+		score += (1000 - len(filename))
+
+		// History/recency boost
+		if mruRank, ok := MruMap[path]; ok {
+			decay := 1.0 + float64(mruRank-1)*0.1
+			score += int(100000000.0 / decay)
+		}
+
+		// Prefix match bonus (20 Trillion)
+		filenameLower := strings.ToLower(filename)
+		patStrLower := strings.ToLower(string(pattern))
+		if strings.HasPrefix(filenameLower, patStrLower) {
+			score += 20000000000000
+		}
+
+		// Exact match bonus (500 Trillion)
+		if filenameLower == patStrLower {
+			score += 500000000000000
+		}
+
+		res.Score = score
+		return res, pos
+	}
+
+	// 2. Try split match across path (Tier 2)
+	if res, pos := fuzzyMatchV2Internal(caseSensitive, normalize, forward, input, pattern, withPos, slab); res.Start >= 0 {
+		score := res.Score
+		// Additive Tier Offset: 1 Billion
+		score += 1000000000
+		// Shorter filename tie-breaker
+		score += (1000 - len(filename))
+
+		// History/recency boost
+		if mruRank, ok := MruMap[path]; ok {
+			decay := 1.0 + float64(mruRank-1)*0.1
+			score += int(100000000.0 / decay)
+		}
+
+		res.Score = score
+		return res, pos
+	}
+
+	// 3. Try directory match (Tier 3)
+	if res, pos := fuzzyMatchV2Internal(caseSensitive, normalize, forward, &dirChars, pattern, withPos, slab); res.Start >= 0 {
+		score := res.Score
+		// Additive Tier Offset: 1 Million
+		score += 1000000
+		// Shorter filename tie-breaker
+		score += (1000 - len(filename))
+
+		// History/recency boost
+		if mruRank, ok := MruMap[path]; ok {
+			decay := 1.0 + float64(mruRank-1)*0.1
+			score += int(100000000.0 / decay)
+		}
+
+		res.Score = score
+		res.Start += startOfDir
+		res.End += startOfDir
+		if pos != nil {
+			for idx := range *pos {
+				(*pos)[idx] += startOfDir
+			}
+		}
+		return res, pos
+	}
+
+	return Result{-1, -1, 0}, nil
+}
+
 func FuzzyMatchV2(caseSensitive bool, normalize bool, forward bool, input *util.Chars, pattern []rune, withPos bool, slab *util.Slab) (Result, *[]int) {
+	if CurrentScheme == "filename-first" {
+		return FuzzyMatchV2FilenameFirst(caseSensitive, normalize, forward, input, pattern, withPos, slab)
+	}
+	return fuzzyMatchV2Internal(caseSensitive, normalize, forward, input, pattern, withPos, slab)
+}
+
+func fuzzyMatchV2Internal(caseSensitive bool, normalize bool, forward bool, input *util.Chars, pattern []rune, withPos bool, slab *util.Slab) (Result, *[]int) {
 	// Assume that pattern is given in lowercase if case-insensitive.
 	// First check if there's a match and calculate bonus for each position.
 	// If the input string is too long, consider finding the matching chars in

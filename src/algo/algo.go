@@ -526,6 +526,13 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 		return Result{0, 0, score}, posArray(withPos, 0)
 	}
 
+	// Quick check: does the path (excluding icon) contain all query characters?
+	// If not, we can instantly discard the item (saves doing 2-3 matching/scan loops).
+	pathChars := input.Slice(startOfFilename, n)
+	if minIdx, _ := asciiFuzzyIndex(&pathChars, pattern, caseSensitive); minIdx < 0 {
+		return Result{-1, -1, 0}, nil
+	}
+
 	// ── Scoring tiers ──
 
 	// 1. Try filename match (Tier 1: 40000+)
@@ -629,7 +636,6 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 	}
 
 	// 2. Try full path match (Tier 2: 25000+)
-	pathChars := input.Slice(startOfFilename, n)
 	if res, pos := fuzzyMatchV2Internal(caseSensitive, normalize, forward, &pathChars, pattern, withPos, slab); res.Start >= 0 {
 		matchScore := res.Score
 		if matchScore > 5000 {

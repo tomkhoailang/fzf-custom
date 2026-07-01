@@ -1159,15 +1159,62 @@ func pushMruFiles(cl *ChunkList) {
 	}
 }
 
+func ExtractPathFromFormatted(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	if data[0] != '\x1b' {
+		return string(data)
+	}
+
+	cleaned := stripAnsi(data)
+	parts := strings.Split(cleaned, "  ")
+	if len(parts) < 2 {
+		return cleaned
+	}
+
+	filename := strings.TrimSpace(parts[1])
+	if len(parts) >= 3 {
+		dir := strings.TrimSpace(parts[2])
+		if dir != "" {
+			return dir + "/" + filename
+		}
+	}
+	return filename
+}
+
+func stripAnsi(data []byte) string {
+	var buf strings.Builder
+	inEscape := false
+	for i := 0; i < len(data); i++ {
+		if data[i] == '\x1b' {
+			inEscape = true
+			continue
+		}
+		if inEscape {
+			if data[i] == 'm' {
+				inEscape = false
+			}
+			continue
+		}
+		buf.WriteByte(data[i])
+	}
+	return buf.String()
+}
+
 func isMruFile(data []byte) bool {
 	if len(algo.MruMap) == 0 {
 		return false
 	}
-	_, ok := algo.MruMap[string(data)]
+	path := ExtractPathFromFormatted(data)
+	_, ok := algo.MruMap[path]
 	return ok
 }
 
 func formatLineWithDummyIcon(data []byte) []byte {
+	if len(data) > 0 && data[0] == '\x1b' {
+		return data
+	}
 	// Find last '/' to split filename and dir
 	lastSlash := -1
 	for i := len(data) - 1; i >= 0; i-- {

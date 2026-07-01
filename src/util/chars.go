@@ -46,11 +46,7 @@ func checkAscii(bytes []byte) (bool, int) {
 
 // ToChars converts byte array into rune array
 func ToChars(bytesVal []byte) Chars {
-	checkBytes := bytesVal
-	if idx := bytes.Index(bytesVal, []byte("  ")); idx >= 0 {
-		checkBytes = bytesVal[idx+2:]
-	}
-	inBytes, bytesUntil := checkAscii(checkBytes)
+	inBytes, bytesUntil := checkAscii(bytesVal)
 	if inBytes {
 		return Chars{slice: bytesVal, inBytes: inBytes}
 	}

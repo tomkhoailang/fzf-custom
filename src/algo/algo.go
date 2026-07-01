@@ -533,7 +533,8 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 	// Quick check: does the path (excluding icon) contain all query characters?
 	// If not, we can instantly discard the item (saves doing 2-3 matching/scan loops).
 	pathChars := input.Slice(startOfFilename, endOfLine)
-	if minIdx, _ := asciiFuzzyIndex(&pathChars, pattern, caseSensitive); minIdx < 0 {
+	minIdx, maxIdx := asciiFuzzyIndex(&pathChars, pattern, caseSensitive)
+	if minIdx < 0 {
 		return Result{-1, -1, 0}, nil
 	}
 
@@ -640,7 +641,7 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 	}
 
 	// 2. Try full path match (Tier 2: 25000+)
-	if res, pos := fuzzyMatchV2Internal(caseSensitive, normalize, forward, &pathChars, pattern, withPos, slab); res.Start >= 0 {
+	if res, pos := fuzzyMatchV2InternalWithRange(caseSensitive, normalize, forward, &pathChars, pattern, withPos, slab, minIdx, maxIdx); res.Start >= 0 {
 		matchScore := res.Score
 		if matchScore > 5000 {
 			matchScore = 5000
@@ -709,6 +710,10 @@ func FuzzyMatchV2(caseSensitive bool, normalize bool, forward bool, input *util.
 }
 
 func fuzzyMatchV2Internal(caseSensitive bool, normalize bool, forward bool, input *util.Chars, pattern []rune, withPos bool, slab *util.Slab) (Result, *[]int) {
+	return fuzzyMatchV2InternalWithRange(caseSensitive, normalize, forward, input, pattern, withPos, slab, -1, -1)
+}
+
+func fuzzyMatchV2InternalWithRange(caseSensitive bool, normalize bool, forward bool, input *util.Chars, pattern []rune, withPos bool, slab *util.Slab, minIdx int, maxIdx int) (Result, *[]int) {
 	// Assume that pattern is given in lowercase if case-insensitive.
 	// First check if there's a match and calculate bonus for each position.
 	// If the input string is too long, consider finding the matching chars in
@@ -731,9 +736,11 @@ func fuzzyMatchV2Internal(caseSensitive bool, normalize bool, forward bool, inpu
 	}
 
 	// Phase 1. Optimized search for ASCII string
-	minIdx, maxIdx := asciiFuzzyIndex(input, pattern, caseSensitive)
 	if minIdx < 0 {
-		return Result{-1, -1, 0}, nil
+		minIdx, maxIdx = asciiFuzzyIndex(input, pattern, caseSensitive)
+		if minIdx < 0 {
+			return Result{-1, -1, 0}, nil
+		}
 	}
 	// fmt.Println(N, maxIdx, idx, maxIdx-idx, input.ToString())
 	N = maxIdx - minIdx

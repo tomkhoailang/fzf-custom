@@ -258,9 +258,8 @@ Loop:
 }
 
 func extractColor(str string, state *ansiState, proc func(string, *ansiState) bool) (string, *[]ansiOffset, *ansiState) {
-	// We append to a stack allocated variable that we'll
-	// later copy and return, to save on allocations.
-	offsets := make([]ansiOffset, 0, 32)
+	var localOffsets [4]ansiOffset
+	offsets := localOffsets[:0]
 
 	if state != nil {
 		offsets = append(offsets, ansiOffset{[2]int32{0, 0}, *state})

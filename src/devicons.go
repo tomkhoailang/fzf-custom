@@ -1028,15 +1028,30 @@ var (
 	hasCache  bool
 )
 
-func getIcon(filename string) IconEntry {
-	// 1. Try exact filename match
-	idx, found := slices.BinarySearchFunc(FilenameIcons, filename, func(entry IconEntry, target string) int {
-		if entry.Key < target {
+func compareStringBytes(s string, b []byte) int {
+	minLen := len(s)
+	if len(b) < minLen {
+		minLen = len(b)
+	}
+	for i := 0; i < minLen; i++ {
+		if s[i] < b[i] {
 			return -1
-		} else if entry.Key > target {
+		} else if s[i] > b[i] {
 			return 1
 		}
-		return 0
+	}
+	if len(s) < len(b) {
+		return -1
+	} else if len(s) > len(b) {
+		return 1
+	}
+	return 0
+}
+
+func getIcon(filename []byte) IconEntry {
+	// 1. Try exact filename match
+	idx, found := slices.BinarySearchFunc(FilenameIcons, filename, func(entry IconEntry, target []byte) int {
+		return compareStringBytes(entry.Key, target)
 	})
 	if found {
 		return FilenameIcons[idx]
@@ -1054,17 +1069,12 @@ func getIcon(filename string) IconEntry {
 		ext := filename[dotIdx+1:]
 		
 		// 1-element cache check
-		if hasCache && ext == lastExt {
+		if hasCache && string(ext) == lastExt {
 			return lastMatch
 		}
 
-		idx, found = slices.BinarySearchFunc(ExtensionIcons, ext, func(entry IconEntry, target string) int {
-			if entry.Key < target {
-				return -1
-			} else if entry.Key > target {
-				return 1
-			}
-			return 0
+		idx, found = slices.BinarySearchFunc(ExtensionIcons, ext, func(entry IconEntry, target []byte) int {
+			return compareStringBytes(entry.Key, target)
 		})
 		
 		var match IconEntry
@@ -1075,7 +1085,7 @@ func getIcon(filename string) IconEntry {
 		}
 
 		// Cache
-		lastExt = ext
+		lastExt = string(ext)
 		lastMatch = match
 		hasCache = true
 
@@ -1095,13 +1105,13 @@ func formatLineWithIcon(data []byte) []byte {
 		}
 	}
 
-	var filename string
+	var filename []byte
 	var dir []byte
 	if lastSlash >= 0 {
-		filename = string(data[lastSlash+1:])
+		filename = data[lastSlash+1:]
 		dir = data[:lastSlash]
 	} else {
-		filename = string(data)
+		filename = data
 	}
 
 	match := getIcon(filename)
@@ -1114,7 +1124,7 @@ func formatLineWithIcon(data []byte) []byte {
 	buf.WriteByte('m')
 	buf.WriteString(match.Icon)
 	buf.WriteString("\x1b[0m  ")
-	buf.WriteString(filename)
+	buf.Write(filename)
 	buf.WriteString("  ")
 
 	if len(dir) > 0 {
@@ -1153,7 +1163,6 @@ func isMruFile(data []byte) bool {
 	if len(algo.MruMap) == 0 {
 		return false
 	}
-	path := string(data)
-	_, ok := algo.MruMap[path]
+	_, ok := algo.MruMap[string(data)]
 	return ok
 }

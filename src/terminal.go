@@ -4162,6 +4162,17 @@ func (t *Terminal) printHighlighted(result Result, colBase tui.ColorPair, colMat
 		maxLines = maxLineNum - lineNum + 1
 	}
 	lines, overflow := t.itemLines(item, maxLines)
+	if len(lines) > 0 && len(lines[0]) > 0 && lines[0][0] == '' {
+		match := getRealIconFromRunes(lines[0])
+		lines[0][0] = []rune(match.Icon)[0]
+
+		for idx, off := range allOffsets {
+			if off.offset[0] == 0 && off.offset[1] == 1 && !off.match {
+				allOffsets[idx].color = tui.ColNormal.WithFg(tui.ColorAttr{Color: tui.Color(match.Color)})
+				break
+			}
+		}
+	}
 	numItemLines := len(lines)
 
 	finalLineNum := lineNum

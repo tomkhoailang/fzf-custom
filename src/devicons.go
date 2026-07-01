@@ -1166,3 +1166,60 @@ func isMruFile(data []byte) bool {
 	_, ok := algo.MruMap[string(data)]
 	return ok
 }
+
+func formatLineWithDummyIcon(data []byte) []byte {
+	// Find last '/' to split filename and dir
+	lastSlash := -1
+	for i := len(data) - 1; i >= 0; i-- {
+		if data[i] == '/' || data[i] == '\\' {
+			lastSlash = i
+			break
+		}
+	}
+
+	var filename []byte
+	var dir []byte
+	if lastSlash >= 0 {
+		filename = data[lastSlash+1:]
+		dir = data[:lastSlash]
+	} else {
+		filename = data
+	}
+
+	var buf bytes.Buffer
+	buf.Grow(20 + len(filename) + len(dir))
+
+	buf.WriteString("\x1b[38;5;231m\x1b[0m  ")
+	buf.Write(filename)
+	buf.WriteString("  ")
+
+	if len(dir) > 0 {
+		buf.WriteString("\x1b[38;5;244;3m")
+		buf.Write(dir)
+		buf.WriteString("\x1b[0m")
+	}
+
+	return buf.Bytes()
+}
+
+func getRealIconFromRunes(runes []rune) IconEntry {
+	if len(runes) < 4 || runes[0] != '' {
+		return IconEntry{Key: "", Icon: "", Color: 231}
+	}
+
+	// Scan until double space
+	endIdx := -1
+	for i := 3; i < len(runes)-1; i++ {
+		if runes[i] == ' ' && runes[i+1] == ' ' {
+			endIdx = i
+			break
+		}
+	}
+	if endIdx < 0 {
+		endIdx = len(runes)
+	}
+
+	filenameRunes := runes[3:endIdx]
+	filenameStr := string(filenameRunes)
+	return getIcon([]byte(filenameStr))
+}

@@ -282,7 +282,7 @@ func Run(opts *Options) (int, error) {
 				if isMruFile(data) {
 					return true
 				}
-				data = formatLineWithIcon(data)
+				data = formatLineWithDummyIcon(data)
 			}
 			return chunkList.Push(data)
 		}, eventBox, executor, opts.ReadZero, opts.Filter == nil)

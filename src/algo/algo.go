@@ -187,6 +187,9 @@ func Init(scheme string) bool {
 			cwd, err := os.Getwd()
 			parts := strings.Split(mruEnv, ";")
 			for idx, file := range parts {
+				if file == "" || strings.Contains(file, "── file results") {
+					continue
+				}
 				// Normalize absolute path to relative path
 				relFile := file
 				if err == nil && strings.HasPrefix(file, cwd) {

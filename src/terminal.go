@@ -1719,12 +1719,29 @@ func (t *Terminal) isFirstNonMruItem(item *Item) bool {
 	if algo.CurrentScheme != "filename-first" || len(algo.MruMap) == 0 || algo.NeuralNet != nil {
 		return false
 	}
+	f, _ := os.OpenFile("/tmp/fzf_debug.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if f != nil {
+		defer f.Close()
+		fmt.Fprintf(f, "--- isFirstNonMruItem check (item Index %d, Text %q) ---\n", item.Index(), item.text.ToString())
+		fmt.Fprintf(f, "MruMap keys:\n")
+		for k, v := range algo.MruMap {
+			fmt.Fprintf(f, "  %s: %d\n", k, v)
+		}
+	}
 	total := t.merger.Length()
 	for i := 0; i < total; i++ {
 		res := t.merger.Get(i)
-		path := ExtractPathFromFormatted(res.item.text.Bytes())
-		if _, isMru := algo.GetMruRank(path); !isMru {
-			return res.item.Index() == item.Index()
+		path := ExtractPathFromFormatted([]byte(res.item.text.ToString()))
+		rank, isMru := algo.GetMruRank(path)
+		if f != nil {
+			fmt.Fprintf(f, "  index=%d, path=%q, rank=%d, isMru=%v\n", i, path, rank, isMru)
+		}
+		if !isMru {
+			firstNonMruMatched := res.item.Index() == item.Index()
+			if f != nil {
+				fmt.Fprintf(f, "  Encountered first non-MRU: index=%d, match=%v\n", i, firstNonMruMatched)
+			}
+			return firstNonMruMatched
 		}
 	}
 	return false

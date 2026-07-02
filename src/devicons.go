@@ -1144,7 +1144,7 @@ func pushMruFiles(cl *ChunkList) {
 	cwd, err := os.Getwd()
 	parts := strings.Split(mruEnv, ";")
 	for _, file := range parts {
-		if file == "" {
+		if file == "" || strings.Contains(file, "── file results") {
 			continue
 		}
 		relFile := file
@@ -1162,9 +1162,6 @@ func pushMruFiles(cl *ChunkList) {
 func ExtractPathFromFormatted(data []byte) string {
 	if len(data) == 0 {
 		return ""
-	}
-	if data[0] != '\x1b' {
-		return string(data)
 	}
 
 	cleaned := stripAnsi(data)

@@ -704,8 +704,14 @@ func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forwa
 
 	if NeuralNet != nil && !bypassNeural {
 		if rank, isMru := GetMruRank(path); isMru {
-			// MRU files get high score combining recency and query match score (max 54800 + res.Score)
-			res.Score = 35000 + (100-rank)*200 + res.Score
+			filenameBoost := 0
+			if isFilenameMatch {
+				filenameBoost = 15000
+			} else if !isDirMatch {
+				filenameBoost = 5000
+			}
+			// MRU files get high score combining recency, query match score, and filename boost (max 69800 + res.Score)
+			res.Score = 35000 + (100-rank)*200 + res.Score + filenameBoost
 		} else {
 			var virtualMatchScore float32 = 0
 			vname := getVirtualName(path)

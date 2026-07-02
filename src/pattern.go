@@ -403,18 +403,37 @@ func (p *Pattern) MatchItem(item *Item, withPos bool, slab *util.Slab) (Result, 
 				path := ExtractPathFromFormatted([]byte(item.text.ToString()))
 				if rank, isMru := algo.GetMruRank(path); isMru {
 					var totalMatchScore int
+					var filenameBoost int
 					for _, termSet := range p.termSets {
 						for _, term := range termSet {
 							if term.typ == termFuzzy && !term.inv {
 								pathChars := util.ToChars([]byte(path))
-								if res, _ := algo.FuzzyMatchV2Internal(term.caseSensitive, term.normalize, p.forward, &pathChars, term.text, false, slab); res.Start >= 0 {
+								if res, pos := algo.FuzzyMatchV2Internal(term.caseSensitive, term.normalize, p.forward, &pathChars, term.text, true, slab); res.Start >= 0 {
 									totalMatchScore += res.Score
+
+									isFilenameMatch := true
+									isDirMatch := true
+									lenDir := strings.LastIndex(path, "/") + 1
+									if pos != nil {
+										for _, val := range *pos {
+											if val < lenDir {
+												isFilenameMatch = false
+											} else {
+												isDirMatch = false
+											}
+										}
+									}
+									if isFilenameMatch {
+										filenameBoost += 15000
+									} else if !isDirMatch {
+										filenameBoost += 5000
+									}
 								}
 								break
 							}
 						}
 					}
-					finalScore = 35000 + (100-rank)*200 + totalMatchScore
+					finalScore = 35000 + (100-rank)*200 + totalMatchScore + filenameBoost
 				} else {
 					var totalMatchScore float32
 					var totalVirtualMatchScore float32

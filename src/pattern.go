@@ -454,7 +454,7 @@ func (p *Pattern) MatchItem(item *Item, withPos bool, slab *util.Slab) (Result, 
 							}
 
 							if termIsFilenameMatch && isSequential {
-								sequentialBoost += 2000
+								sequentialBoost += 3000
 							}
 							break
 						}
@@ -491,7 +491,7 @@ func (p *Pattern) MatchItem(item *Item, withPos bool, slab *util.Slab) (Result, 
 					var mruBoost int
 					if rank, ok := algo.GetMruRank(path); ok {
 						decay := 1.0 + float64(rank-1)*0.1
-						mruBoost = int(3000.0 / decay)
+						mruBoost = int(1500.0 / decay)
 					}
 					filenameLen := len(path) - lenDir
 					shortBonus := 500 - filenameLen

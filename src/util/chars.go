@@ -22,6 +22,8 @@ type Chars struct {
 	// XXX Piggybacking item index here is a horrible idea. But I'm trying to
 	// minimize the memory footprint by not wasting padded spaces.
 	Index int32
+
+	FfCache interface{}
 }
 
 func checkAscii(bytes []byte) (bool, int) {

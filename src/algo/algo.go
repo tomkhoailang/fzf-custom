@@ -478,7 +478,23 @@ func getMruBoost(path string) int {
 	return 0
 }
 
-func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forward bool, input *util.Chars, pattern []rune, withPos bool, slab *util.Slab, bypassNeural bool) (Result, *[]int) {
+type FilenameFirstCache struct {
+	Filename        string
+	Dir             string
+	Path            string
+	FilenameChars   util.Chars
+	LenDir          int
+	StartOfFilename int
+	EndOfFilename   int
+	StartOfDir      int
+	HasIconSep      bool
+}
+
+func GetOrInitFfCache(input *util.Chars) *FilenameFirstCache {
+	if input.FfCache != nil {
+		return input.FfCache.(*FilenameFirstCache)
+	}
+
 	n := input.Length()
 	endOfLine := n
 	if input.IsBytes() {
@@ -487,7 +503,6 @@ func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forwa
 	firstSep := -1
 	lastSep := -1
 
-	// Fast path for ASCII: directly scan slice bytes instead of calling Get()
 	if input.IsBytes() {
 		slice := input.Bytes()
 		for i := 0; i < len(slice)-1; i++ {
@@ -509,7 +524,6 @@ func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forwa
 		}
 	}
 
-	// Adjust lastSep if contiguous space run
 	if lastSep > 0 && firstSep >= 0 {
 		isContiguous := true
 		if input.IsBytes() {
@@ -533,13 +547,11 @@ func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forwa
 		}
 	}
 
-	// Determine regions
 	var startOfFilename, endOfFilename, startOfDir int
+	hasIconSep := true
 	if firstSep < 0 {
-		// No icon separator — plain text, fall back to standard match
-		return fuzzyMatchV2Internal(caseSensitive, normalize, forward, input, pattern, withPos, slab)
+		hasIconSep = false
 	} else if firstSep == lastSep {
-		// "icon  filename" (no dir)
 		startOfFilename = firstSep
 		if input.IsBytes() {
 			slice := input.Bytes()
@@ -554,7 +566,6 @@ func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forwa
 		endOfFilename = endOfLine
 		startOfDir = endOfLine
 	} else {
-		// "icon  filename  dir"
 		startOfFilename = firstSep
 		if input.IsBytes() {
 			slice := input.Bytes()
@@ -570,51 +581,77 @@ func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forwa
 		startOfDir = lastSep + 2
 	}
 
-	filenameChars := input.Slice(startOfFilename, endOfFilename)
-	filenameLen := endOfFilename - startOfFilename
-
-	filename := (&filenameChars).ToString()
+	var filenameChars util.Chars
+	filename := ""
 	dir := ""
-	if startOfDir < endOfLine {
-		dirChars := input.Slice(startOfDir, endOfLine)
-		rawDir := (&dirChars).ToString()
-		// Strip ANSI escape codes from dir — the formatted line stores dir with
-		// dim ANSI codes (e.g. "\x1b[38;5;244;3mapp/workers\x1b[0m") which would
-		// corrupt the path used for MruMap lookups and fuzzy matching.
-		var cleanDir []byte
-		inEsc := false
-		for i := 0; i < len(rawDir); i++ {
-			b := rawDir[i]
-			if b == '\x1b' {
-				inEsc = true
-				continue
-			}
-			if inEsc {
-				if b == 'm' {
-					inEsc = false
+	path := ""
+	lenDir := 0
+
+	if hasIconSep {
+		filenameChars = input.Slice(startOfFilename, endOfFilename)
+		filename = (&filenameChars).ToString()
+		if startOfDir < endOfLine {
+			dirChars := input.Slice(startOfDir, endOfLine)
+			rawDir := (&dirChars).ToString()
+			var cleanDir []byte
+			inEsc := false
+			for i := 0; i < len(rawDir); i++ {
+				b := rawDir[i]
+				if b == '\x1b' {
+					inEsc = true
+					continue
 				}
-				continue
+				if inEsc {
+					if b == 'm' {
+						inEsc = false
+					}
+					continue
+				}
+				cleanDir = append(cleanDir, b)
 			}
-			cleanDir = append(cleanDir, b)
+			dir = string(cleanDir)
 		}
-		dir = string(cleanDir)
-	}
-	path := filename
-	if dir != "" {
-		path = dir + "/" + filename
+		path = filename
+		if dir != "" {
+			path = dir + "/" + filename
+		}
+		lenDir = strings.LastIndex(path, "/") + 1
 	}
 
-	InitNeural()
+	cache := &FilenameFirstCache{
+		Filename:        filename,
+		Dir:             dir,
+		Path:            path,
+		FilenameChars:   filenameChars,
+		LenDir:          lenDir,
+		StartOfFilename: startOfFilename,
+		EndOfFilename:   endOfFilename,
+		StartOfDir:      startOfDir,
+		HasIconSep:      hasIconSep,
+	}
+	input.FfCache = cache
+	return cache
+}
 
-	// Handle empty query early (no match required)
+func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forward bool, input *util.Chars, pattern []rune, withPos bool, slab *util.Slab, bypassNeural bool) (Result, *[]int) {
+	cache := GetOrInitFfCache(input)
+
+	if !cache.HasIconSep {
+		return fuzzyMatchV2Internal(caseSensitive, normalize, forward, input, pattern, withPos, slab)
+	}
+
+	path := cache.Path
+	filenameLen := len(cache.Filename)
+	lenDir := cache.LenDir
+	startOfFilename := cache.StartOfFilename
+	startOfDir := cache.StartOfDir
+
 	if len(pattern) == 0 {
 		var score int
 		if NeuralNet != nil {
 			if rank, isMru := GetMruRank(path); isMru {
-				// MRU files get high score, keeping them at the top in exact recency order (max 54800)
 				score = 35000 + (100-rank)*200
 			} else {
-				// Non-MRU files get neural score, capped below the MRU threshold (max 30000)
 				neuralScore := CalculateNeuralScore(path, 0, 0)
 				score = int(neuralScore * 30000)
 			}
@@ -635,10 +672,8 @@ func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forwa
 		return Result{-1, -1, 0}, nil
 	}
 
-	// Determine matching tier based on original match positions in "dir/filename"
 	isFilenameMatch := true
 	isDirMatch := true
-	lenDir := len(dir)
 	if pos != nil {
 		for _, p := range *pos {
 			if p < lenDir {
@@ -652,29 +687,22 @@ func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forwa
 		}
 	}
 
-	// When the full-path match greedily consumed the query in the directory
-	// (e.g. query "worker" matched in "workers/" dir instead of "dast_worker.rb"),
-	// retry matching against just the filename. If the filename alone matches,
-	// reclassify as a filename match so it gets the higher tier score.
 	if !isFilenameMatch && filenameLen >= len(pattern) {
-		fnRes, fnPos := fuzzyMatchV2Internal(caseSensitive, normalize, forward, &filenameChars, pattern, withPos, slab)
+		fnRes, fnPos := fuzzyMatchV2Internal(caseSensitive, normalize, forward, &cache.FilenameChars, pattern, withPos, slab)
 		if fnRes.Start >= 0 {
 			isFilenameMatch = true
 			isDirMatch = false
 			res.Score = fnRes.Score
-			// Convert filename-local positions to path-relative positions
-			// so the existing mapping code below handles them correctly.
 			if fnPos != nil {
 				pathPos := make([]int, len(*fnPos))
 				for idx, p := range *fnPos {
-					pathPos[idx] = lenDir + 1 + p // +1 for the "/" separator
+					pathPos[idx] = lenDir + 1 + p
 				}
 				pos = &pathPos
 			}
 		}
 	}
 
-	// Map positions back to "filename  dir" layout
 	if pos != nil {
 		mappedPos := make([]int, len(*pos))
 		for idx, p := range *pos {
@@ -710,7 +738,6 @@ func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forwa
 			} else if !isDirMatch {
 				filenameBoost = 5000
 			}
-			// MRU files get high score combining recency, query match score, and filename boost (max 69800 + res.Score)
 			res.Score = 35000 + (100-rank)*200 + res.Score + filenameBoost
 		} else {
 			var virtualMatchScore float32 = 0
@@ -726,7 +753,6 @@ func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forwa
 		return res, pos
 	}
 
-	// Compute score for standard filename-first scheme
 	var score int
 	matchScore := res.Score
 	if matchScore > 5000 {
@@ -744,8 +770,8 @@ func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forwa
 		patLen := len(pattern)
 		if patLen <= filenameLen {
 			isPrefix := true
-			if filenameChars.IsBytes() {
-				slice := filenameChars.Bytes()
+			if cache.FilenameChars.IsBytes() {
+				slice := cache.FilenameChars.Bytes()
 				for j := 0; j < patLen; j++ {
 					fc := rune(slice[j])
 					pc := pattern[j]
@@ -755,7 +781,7 @@ func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forwa
 				}
 			} else {
 				for j := 0; j < patLen; j++ {
-					fc := filenameChars.Get(j)
+					fc := cache.FilenameChars.Get(j)
 					pc := pattern[j]
 					if fc >= 'A' && fc <= 'Z' { fc += 32 }
 					if pc >= 'A' && pc <= 'Z' { pc += 32 }

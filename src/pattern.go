@@ -400,11 +400,12 @@ func (p *Pattern) MatchItem(item *Item, withPos bool, slab *util.Slab) (Result, 
 		if offsets, bonus, pos := p.extendedMatch(item, withPos, slab); len(offsets) == len(p.termSets) {
 			finalScore := bonus
 			if algo.CurrentScheme == "filename-first" {
-				path := ExtractPathFromFormatted([]byte(item.text.ToString()))
+				cache := algo.GetOrInitFfCache(&item.text)
+				path := cache.Path
 				var totalMatchScore int
 				isFilenameMatch := true
 				isDirMatch := true
-				lenDir := strings.LastIndex(path, "/") + 1
+				lenDir := cache.LenDir
 				sequentialBoost := 0
 
 				for _, termSet := range p.termSets {

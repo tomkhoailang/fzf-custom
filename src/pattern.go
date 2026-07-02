@@ -397,7 +397,8 @@ func (p *Pattern) matchChunk(chunk *Chunk, cachedBitmap *ChunkBitmap, slab *util
 // A zero-value Result (with item == nil) indicates no match.
 func (p *Pattern) MatchItem(item *Item, withPos bool, slab *util.Slab) (Result, []Offset, *[]int) {
 	if p.extended {
-		if offsets, bonus, pos, termPositions, termScores := p.extendedMatch(item, withPos, slab); len(offsets) == len(p.termSets) {
+		matchWithPos := withPos || algo.CurrentScheme == "filename-first"
+		if offsets, bonus, pos, termPositions, termScores := p.extendedMatch(item, matchWithPos, slab); len(offsets) == len(p.termSets) {
 			finalScore := bonus
 			if algo.CurrentScheme == "filename-first" {
 				cache := algo.GetOrInitFfCache(&item.text)
@@ -508,6 +509,9 @@ func (p *Pattern) MatchItem(item *Item, withPos bool, slab *util.Slab) (Result, 
 						finalScore = 25000 + cappedMatchScore + mruBoost + shortBonus + (sequentialBoost / 2)
 					}
 				}
+			}
+			if !withPos {
+				pos = nil
 			}
 			return buildResult(item, offsets, finalScore), offsets, pos
 		}

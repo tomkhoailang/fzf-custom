@@ -789,7 +789,7 @@ func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forwa
 				}
 			}
 			if isPrefix {
-				score += 10000
+				score += 1000
 				if patLen == filenameLen {
 					score += 10000
 				}
@@ -809,11 +809,19 @@ func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forwa
 }
 
 func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool, input *util.Chars, pattern []rune, withPos bool, slab *util.Slab) (Result, *[]int) {
-	return fuzzyMatchV2FilenameFirstInternal(caseSensitive, normalize, forward, input, pattern, withPos, slab, false)
+	res, pos := fuzzyMatchV2FilenameFirstInternal(caseSensitive, normalize, forward, input, pattern, withPos || true, slab, false)
+	if !withPos {
+		pos = nil
+	}
+	return res, pos
 }
 
 func FuzzyMatchV2FilenameFirstNoNeural(caseSensitive bool, normalize bool, forward bool, input *util.Chars, pattern []rune, withPos bool, slab *util.Slab) (Result, *[]int) {
-	return fuzzyMatchV2FilenameFirstInternal(caseSensitive, normalize, forward, input, pattern, withPos, slab, true)
+	res, pos := fuzzyMatchV2FilenameFirstInternal(caseSensitive, normalize, forward, input, pattern, withPos || true, slab, true)
+	if !withPos {
+		pos = nil
+	}
+	return res, pos
 }
 
 func FuzzyMatchV2Internal(caseSensitive bool, normalize bool, forward bool, input *util.Chars, pattern []rune, withPos bool, slab *util.Slab) (Result, *[]int) {

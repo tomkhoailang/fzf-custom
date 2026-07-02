@@ -399,62 +399,103 @@ func (p *Pattern) MatchItem(item *Item, withPos bool, slab *util.Slab) (Result, 
 	if p.extended {
 		if offsets, bonus, pos := p.extendedMatch(item, withPos, slab); len(offsets) == len(p.termSets) {
 			finalScore := bonus
-			if algo.NeuralNet != nil && algo.CurrentScheme == "filename-first" {
+			if algo.CurrentScheme == "filename-first" {
 				path := ExtractPathFromFormatted([]byte(item.text.ToString()))
-				if rank, isMru := algo.GetMruRank(path); isMru {
-					var totalMatchScore int
-					var filenameBoost int
-					for _, termSet := range p.termSets {
-						for _, term := range termSet {
-							if term.typ == termFuzzy && !term.inv {
-								pathChars := util.ToChars([]byte(path))
-								if res, pos := algo.FuzzyMatchV2Internal(term.caseSensitive, term.normalize, p.forward, &pathChars, term.text, true, slab); res.Start >= 0 {
-									totalMatchScore += res.Score
+				var totalMatchScore int
+				isFilenameMatch := true
+				isDirMatch := true
+				lenDir := strings.LastIndex(path, "/") + 1
+				sequentialBoost := 0
 
-									isFilenameMatch := true
-									isDirMatch := true
-									lenDir := strings.LastIndex(path, "/") + 1
-									if pos != nil {
-										for _, val := range *pos {
-											if val < lenDir {
-												isFilenameMatch = false
-											} else {
-												isDirMatch = false
-											}
+				for _, termSet := range p.termSets {
+					for _, term := range termSet {
+						if term.typ == termFuzzy && !term.inv {
+							pathChars := util.ToChars([]byte(path))
+							if res, pos := algo.FuzzyMatchV2Internal(term.caseSensitive, term.normalize, p.forward, &pathChars, term.text, true, slab); res.Start >= 0 {
+								totalMatchScore += res.Score
+
+								termIsFilenameMatch := true
+								if pos != nil {
+									for _, val := range *pos {
+										if val < lenDir {
+											termIsFilenameMatch = false
+											isFilenameMatch = false
+										} else {
+											isDirMatch = false
 										}
 									}
-									if isFilenameMatch {
-										filenameBoost += 15000
-									} else if !isDirMatch {
-										filenameBoost += 5000
+								}
+
+								// Check if sequential (consecutive matching)
+								isSequential := true
+								if pos != nil && len(*pos) > 1 {
+									for idx := 1; idx < len(*pos); idx++ {
+										if (*pos)[idx] != (*pos)[idx-1]+1 {
+											isSequential = false
+											break
+										}
 									}
 								}
-								break
+
+								if termIsFilenameMatch && isSequential {
+									sequentialBoost += 2000
+								}
 							}
+							break
 						}
 					}
-					finalScore = 35000 + (100-rank)*200 + totalMatchScore + filenameBoost
+				}
+
+				if algo.NeuralNet != nil {
+					if rank, isMru := algo.GetMruRank(path); isMru {
+						filenameBoost := 0
+						if isFilenameMatch {
+							filenameBoost = 15000
+						} else if !isDirMatch {
+							filenameBoost = 5000
+						}
+						finalScore = 35000 + (100-rank)*200 + totalMatchScore + filenameBoost + sequentialBoost
+					} else {
+						var totalVirtualMatchScore float32
+						vname := algo.GetVirtualName(path)
+						vnameChars := util.ToChars([]byte(vname))
+						for _, termSet := range p.termSets {
+							for _, term := range termSet {
+								if term.typ == termFuzzy && !term.inv {
+									if resVN, _ := algo.FuzzyMatchV2Internal(term.caseSensitive, term.normalize, p.forward, &vnameChars, term.text, false, slab); resVN.Start >= 0 {
+										totalVirtualMatchScore += float32(resVN.Score)
+									}
+									break
+								}
+							}
+						}
+						neuralScore := algo.CalculateNeuralScore(path, float32(totalMatchScore), totalVirtualMatchScore)
+						finalScore = int(neuralScore * 30000)
+					}
 				} else {
-					var totalMatchScore float32
-					var totalVirtualMatchScore float32
-					vname := algo.GetVirtualName(path)
-					for _, termSet := range p.termSets {
-						for _, term := range termSet {
-							if term.typ == termFuzzy && !term.inv {
-								pathChars := util.ToChars([]byte(path))
-								if res, _ := algo.FuzzyMatchV2Internal(term.caseSensitive, term.normalize, p.forward, &pathChars, term.text, false, slab); res.Start >= 0 {
-									totalMatchScore += float32(res.Score)
-								}
-								vnameChars := util.ToChars([]byte(vname))
-								if resVN, _ := algo.FuzzyMatchV2Internal(term.caseSensitive, term.normalize, p.forward, &vnameChars, term.text, false, slab); resVN.Start >= 0 {
-									totalVirtualMatchScore += float32(resVN.Score)
-								}
-								break
-							}
-						}
+					var mruBoost int
+					if rank, ok := algo.GetMruRank(path); ok {
+						decay := 1.0 + float64(rank-1)*0.1
+						mruBoost = int(15000.0 / decay)
 					}
-					neuralScore := algo.CalculateNeuralScore(path, totalMatchScore, totalVirtualMatchScore)
-					finalScore = int(neuralScore * 30000)
+					filenameLen := len(path) - lenDir
+					shortBonus := 500 - filenameLen
+					if shortBonus < 0 {
+						shortBonus = 0
+					}
+
+					cappedMatchScore := totalMatchScore
+					if cappedMatchScore > 5000 {
+						cappedMatchScore = 5000
+					}
+
+					if isFilenameMatch {
+						finalScore = 40000 + cappedMatchScore + mruBoost + shortBonus + sequentialBoost
+					} else if isDirMatch {
+						finalScore = 15000 + cappedMatchScore + mruBoost + shortBonus
+					} else {
+						finalScore = 25000 + cappedMatchScore + mruBoost + shortBonus + (sequentialBoost / 2)
+					}
 				}
 			}
 			return buildResult(item, offsets, finalScore), offsets, pos

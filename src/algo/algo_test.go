@@ -261,13 +261,13 @@ func TestSplitScoring(t *testing.T) {
 	if res1.Score <= res2.Score {
 		t.Errorf("Empty query: Expected MRU 1 score (%d) > MRU 2 score (%d)", res1.Score, res2.Score)
 	}
-	// - MRU scores must be >= 10,000,000
-	if res2.Score < 10000000 {
-		t.Errorf("Empty query: Expected MRU 2 score (%d) >= 10000000", res2.Score)
+	// - MRU scores must be >= 35,000
+	if res2.Score < 35000 {
+		t.Errorf("Empty query: Expected MRU 2 score (%d) >= 35000", res2.Score)
 	}
-	// - Non-MRU score must be strictly less than 10,000,000
-	if resNonMru.Score >= 10000000 {
-		t.Errorf("Empty query: Expected Non-MRU score (%d) < 10000000", resNonMru.Score)
+	// - Non-MRU score must be strictly less than 35,000
+	if resNonMru.Score >= 35000 {
+		t.Errorf("Empty query: Expected Non-MRU score (%d) < 35000", resNonMru.Score)
 	}
 
 	// 2. Test active query scoring
@@ -285,12 +285,12 @@ func TestSplitScoring(t *testing.T) {
 	if res1_q.Score <= res2_q.Score {
 		t.Errorf("Active query: Expected MRU 1 score (%d) > MRU 2 score (%d)", res1_q.Score, res2_q.Score)
 	}
-	// - MRU scores must be >= 10,000,000
-	if res2_q.Score < 10000000 {
-		t.Errorf("Active query: Expected MRU 2 score (%d) >= 10000000", res2_q.Score)
+	// - MRU scores must be >= 35,000
+	if res2_q.Score < 35000 {
+		t.Errorf("Active query: Expected MRU 2 score (%d) >= 35000", res2_q.Score)
 	}
-	// - Non-MRU score must be strictly less than 10,000,000
-	if resNonMru_q.Score >= 10000000 {
-		t.Errorf("Active query: Expected Non-MRU score (%d) < 10000000", resNonMru_q.Score)
+	// - Non-MRU score must be strictly less than 35,000
+	if resNonMru_q.Score >= 35000 {
+		t.Errorf("Active query: Expected Non-MRU score (%d) < 35000", resNonMru_q.Score)
 	}
 }

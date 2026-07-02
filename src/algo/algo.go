@@ -789,7 +789,7 @@ func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forwa
 				}
 			}
 			if isPrefix {
-				score += 1000
+				score += 200
 				if patLen == filenameLen {
 					score += 10000
 				}

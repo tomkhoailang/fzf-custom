@@ -114,7 +114,7 @@ func buildResultFromBounds(item *Item, score int, minBegin, minEnd, maxEnd int, 
 		}
 		score += shortBonus
 
-		if mruRank, ok := algo.MruMap[path]; ok {
+		if mruRank, ok := algo.GetMruRank(path); ok {
 			decay := 1.0 + float64(mruRank-1)*0.1
 			score += int(10000.0 / decay)
 		}

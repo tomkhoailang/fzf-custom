@@ -450,12 +450,26 @@ func debugV2(T []rune, pattern []rune, F []int32, lastIdx int, H []int16, C []in
 	}
 }
 
-func getMruBoost(path string) int {
+func GetMruRank(path string) (int, bool) {
 	if len(MruMap) == 0 {
-		return 0
+		return 0, false
 	}
-	if mruRank, ok := MruMap[path]; ok {
-		decay := 1.0 + float64(mruRank-1)*0.1
+	if rank, ok := MruMap[path]; ok {
+		return rank, true
+	}
+	pathClean := strings.ReplaceAll(path, "\\", "/")
+	for mruKey, rank := range MruMap {
+		mruClean := strings.ReplaceAll(mruKey, "\\", "/")
+		if strings.HasSuffix(mruClean, pathClean) || strings.HasSuffix(pathClean, mruClean) {
+			return rank, true
+		}
+	}
+	return 0, false
+}
+
+func getMruBoost(path string) int {
+	if rank, ok := GetMruRank(path); ok {
+		decay := 1.0 + float64(rank-1)*0.1
 		return int(15000.0 / decay)
 	}
 	return 0

@@ -1207,7 +1207,7 @@ func isMruFile(data []byte) bool {
 		return false
 	}
 	path := ExtractPathFromFormatted(data)
-	_, ok := algo.MruMap[path]
+	_, ok := algo.GetMruRank(path)
 	return ok
 }
 

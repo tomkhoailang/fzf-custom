@@ -1723,7 +1723,7 @@ func (t *Terminal) isFirstNonMruItem(item *Item) bool {
 	for i := 0; i < total; i++ {
 		res := t.merger.Get(i)
 		path := ExtractPathFromFormatted(res.item.text.Bytes())
-		if _, isMru := algo.MruMap[path]; !isMru {
+		if _, isMru := algo.GetMruRank(path); !isMru {
 			return res.item.Index() == item.Index()
 		}
 	}

@@ -749,9 +749,6 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 }
 
 func FuzzyMatchV2(caseSensitive bool, normalize bool, forward bool, input *util.Chars, pattern []rune, withPos bool, slab *util.Slab) (Result, *[]int) {
-	if strings.Contains(input.ToString(), "── file results") {
-		return Result{0, 0, 32767}, &[]int{}
-	}
 	if CurrentScheme == "filename-first" {
 		return FuzzyMatchV2FilenameFirst(caseSensitive, normalize, forward, input, pattern, withPos, slab)
 	}
@@ -1048,9 +1045,6 @@ func calculateScore(caseSensitive bool, normalize bool, text *util.Chars, patter
 
 // FuzzyMatchV1 performs fuzzy-match
 func FuzzyMatchV1(caseSensitive bool, normalize bool, forward bool, text *util.Chars, pattern []rune, withPos bool, slab *util.Slab) (Result, *[]int) {
-	if strings.Contains(text.ToString(), "── file results") {
-		return Result{0, 0, 32767}, &[]int{}
-	}
 	if len(pattern) == 0 {
 		return Result{0, 0, 0}, nil
 	}

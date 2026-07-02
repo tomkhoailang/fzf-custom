@@ -12,11 +12,11 @@ import (
 
 type Network struct {
 	Weights      [][][]float32 `json:"weights"`
-	Biases       [][]float32   `json:"biases"`
-	Gammas       [][]float32   `json:"gammas"`
-	Betas        [][]float32   `json:"betas"`
-	RunningMeans [][]float32   `json:"running_means"`
-	RunningVars  [][]float32   `json:"running_vars"`
+	Biases       [][][]float32 `json:"biases"`
+	Gammas       [][][]float32 `json:"gammas"`
+	Betas        [][][]float32 `json:"betas"`
+	RunningMeans [][][]float32 `json:"running_means"`
+	RunningVars  [][][]float32 `json:"running_vars"`
 }
 
 type NeuralOpenWeights struct {
@@ -260,7 +260,10 @@ func (nn *Network) Forward(input []float32) float32 {
 	current := input
 	for i := 0; i < len(nn.Weights); i++ {
 		w := nn.Weights[i]
-		b := nn.Biases[i]
+		var b []float32
+		if i < len(nn.Biases) && len(nn.Biases[i]) > 0 {
+			b = nn.Biases[i][0]
+		}
 		
 		inputDim := len(w)
 		outputDim := len(w[0])
@@ -281,10 +284,11 @@ func (nn *Network) Forward(input []float32) float32 {
 
 		// Batch Normalization (hidden layers only)
 		if i < len(nn.Weights)-1 && i < len(nn.Gammas) && i < len(nn.Betas) && i < len(nn.RunningMeans) && i < len(nn.RunningVars) {
-			gamma := nn.Gammas[i]
-			beta := nn.Betas[i]
-			mean := nn.RunningMeans[i]
-			variance := nn.RunningVars[i]
+			var gamma, beta, mean, variance []float32
+			if len(nn.Gammas[i]) > 0 { gamma = nn.Gammas[i][0] }
+			if len(nn.Betas[i]) > 0 { beta = nn.Betas[i][0] }
+			if len(nn.RunningMeans[i]) > 0 { mean = nn.RunningMeans[i][0] }
+			if len(nn.RunningVars[i]) > 0 { variance = nn.RunningVars[i][0] }
 			
 			for col := 0; col < outputDim; col++ {
 				if col < len(gamma) && col < len(beta) && col < len(mean) && col < len(variance) {

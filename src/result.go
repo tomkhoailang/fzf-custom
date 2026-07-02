@@ -126,7 +126,11 @@ func buildResultFromBounds(item *Item, score int, minBegin, minEnd, maxEnd int, 
 		switch criterion {
 		case byScore:
 			// Higher is better
-			val = math.MaxUint16 - util.AsUint16(score)
+			s := score
+			if algo.CurrentScheme == "filename-first" {
+				s /= 10
+			}
+			val = math.MaxUint16 - util.AsUint16(s)
 		case byChunk:
 			if validOffsetFound {
 				b := minBegin

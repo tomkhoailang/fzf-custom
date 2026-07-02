@@ -410,8 +410,10 @@ func (p *Pattern) MatchItem(item *Item, withPos bool, slab *util.Slab) (Result, 
 
 				mruBoost := 0
 				if rank, ok := algo.GetMruRank(path); ok {
-					decay := 1.0 + float64(rank-1)*0.1
-					mruBoost = int(1500.0 / decay)
+					mruBoost = 1500 - (rank-1)*300
+					if mruBoost < 150 {
+						mruBoost = 150
+					}
 				}
 				filenameLen := len(cache.Filename)
 				shortBonus := 500 - filenameLen

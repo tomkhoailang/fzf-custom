@@ -478,7 +478,7 @@ func getMruBoost(path string) int {
 	return 0
 }
 
-func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool, input *util.Chars, pattern []rune, withPos bool, slab *util.Slab) (Result, *[]int) {
+func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forward bool, input *util.Chars, pattern []rune, withPos bool, slab *util.Slab, bypassNeural bool) (Result, *[]int) {
 	n := input.Length()
 	endOfLine := n
 	if input.IsBytes() {
@@ -702,7 +702,7 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 		res.End = maxP + 1
 	}
 
-	if NeuralNet != nil {
+	if NeuralNet != nil && !bypassNeural {
 		if rank, isMru := GetMruRank(path); isMru {
 			// MRU files get high score combining recency and query match score (max 54800 + res.Score)
 			res.Score = 35000 + (100-rank)*200 + res.Score
@@ -774,6 +774,22 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 	}
 	res.Score = score
 	return res, pos
+}
+
+func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool, input *util.Chars, pattern []rune, withPos bool, slab *util.Slab) (Result, *[]int) {
+	return fuzzyMatchV2FilenameFirstInternal(caseSensitive, normalize, forward, input, pattern, withPos, slab, false)
+}
+
+func FuzzyMatchV2FilenameFirstNoNeural(caseSensitive bool, normalize bool, forward bool, input *util.Chars, pattern []rune, withPos bool, slab *util.Slab) (Result, *[]int) {
+	return fuzzyMatchV2FilenameFirstInternal(caseSensitive, normalize, forward, input, pattern, withPos, slab, true)
+}
+
+func FuzzyMatchV2Internal(caseSensitive bool, normalize bool, forward bool, input *util.Chars, pattern []rune, withPos bool, slab *util.Slab) (Result, *[]int) {
+	return fuzzyMatchV2Internal(caseSensitive, normalize, forward, input, pattern, withPos, slab)
+}
+
+func GetVirtualName(path string) string {
+	return getVirtualName(path)
 }
 
 func FuzzyMatchV2(caseSensitive bool, normalize bool, forward bool, input *util.Chars, pattern []rune, withPos bool, slab *util.Slab) (Result, *[]int) {

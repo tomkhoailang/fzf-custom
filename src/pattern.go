@@ -155,7 +155,11 @@ func BuildPattern(cache *ChunkCache, patternCache map[string]*Pattern, fuzzy boo
 
 	ptr.cacheKey = ptr.buildCacheKey()
 	ptr.directAlgo, ptr.directTerm = ptr.buildDirectAlgo(fuzzyAlgo)
-	ptr.procFun[termFuzzy] = fuzzyAlgo
+	if extended && algo.CurrentScheme == "filename-first" {
+		ptr.procFun[termFuzzy] = algo.FuzzyMatchV2FilenameFirstNoNeural
+	} else {
+		ptr.procFun[termFuzzy] = fuzzyAlgo
+	}
 	ptr.procFun[termEqual] = algo.EqualMatch
 	ptr.procFun[termExact] = algo.ExactMatchNaive
 	ptr.procFun[termExactBoundary] = algo.ExactMatchBoundary
@@ -394,7 +398,47 @@ func (p *Pattern) matchChunk(chunk *Chunk, cachedBitmap *ChunkBitmap, slab *util
 func (p *Pattern) MatchItem(item *Item, withPos bool, slab *util.Slab) (Result, []Offset, *[]int) {
 	if p.extended {
 		if offsets, bonus, pos := p.extendedMatch(item, withPos, slab); len(offsets) == len(p.termSets) {
-			return buildResult(item, offsets, bonus), offsets, pos
+			finalScore := bonus
+			if algo.NeuralNet != nil && algo.CurrentScheme == "filename-first" {
+				path := ExtractPathFromFormatted([]byte(item.text.ToString()))
+				if rank, isMru := algo.GetMruRank(path); isMru {
+					var totalMatchScore int
+					for _, termSet := range p.termSets {
+						for _, term := range termSet {
+							if term.typ == termFuzzy && !term.inv {
+								pathChars := util.ToChars([]byte(path))
+								if res, _ := algo.FuzzyMatchV2Internal(term.caseSensitive, term.normalize, p.forward, &pathChars, term.text, false, slab); res.Start >= 0 {
+									totalMatchScore += res.Score
+								}
+								break
+							}
+						}
+					}
+					finalScore = 35000 + (100-rank)*200 + totalMatchScore
+				} else {
+					var totalMatchScore float32
+					var totalVirtualMatchScore float32
+					vname := algo.GetVirtualName(path)
+					for _, termSet := range p.termSets {
+						for _, term := range termSet {
+							if term.typ == termFuzzy && !term.inv {
+								pathChars := util.ToChars([]byte(path))
+								if res, _ := algo.FuzzyMatchV2Internal(term.caseSensitive, term.normalize, p.forward, &pathChars, term.text, false, slab); res.Start >= 0 {
+									totalMatchScore += float32(res.Score)
+								}
+								vnameChars := util.ToChars([]byte(vname))
+								if resVN, _ := algo.FuzzyMatchV2Internal(term.caseSensitive, term.normalize, p.forward, &vnameChars, term.text, false, slab); resVN.Start >= 0 {
+									totalVirtualMatchScore += float32(resVN.Score)
+								}
+								break
+							}
+						}
+					}
+					neuralScore := algo.CalculateNeuralScore(path, totalMatchScore, totalVirtualMatchScore)
+					finalScore = int(neuralScore * 30000)
+				}
+			}
+			return buildResult(item, offsets, finalScore), offsets, pos
 		}
 		return Result{}, nil, nil
 	}

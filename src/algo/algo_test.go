@@ -236,8 +236,10 @@ func TestSplitScoring(t *testing.T) {
 				{0.1}, {0.1}, {0.1}, {0.1}, {0.1}, {0.1}, {0.1}, {0.1}, {0.1}, {0.1}, {0.1},
 			},
 		},
-		Biases: [][]float32{
-			{0.0},
+		Biases: [][][]float32{
+			{
+				{0.0},
+			},
 		},
 	}
 	defer func() {

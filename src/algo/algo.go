@@ -610,8 +610,14 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 	if len(pattern) == 0 {
 		var score int
 		if NeuralNet != nil {
-			neuralScore := CalculateNeuralScore(path, 0, 0)
-			score = int(neuralScore * 1000000)
+			if rank, isMru := GetMruRank(path); isMru {
+				// MRU files get high score, keeping them at the top in exact recency order
+				score = 10000000 + (100-rank)*10000
+			} else {
+				// Non-MRU files get neural score, capped below the MRU threshold
+				neuralScore := CalculateNeuralScore(path, 0, 0)
+				score = int(neuralScore * 5000000)
+			}
 		} else {
 			mruBoost := getMruBoost(path)
 			shortBonus := 500 - filenameLen
@@ -697,15 +703,20 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 	}
 
 	if NeuralNet != nil {
-		var virtualMatchScore float32 = 0
-		vname := getVirtualName(path)
-		vnameChars := util.ToChars([]byte(vname))
-		if resVN, _ := fuzzyMatchV2Internal(caseSensitive, normalize, forward, &vnameChars, pattern, false, slab); resVN.Start >= 0 {
-			virtualMatchScore = float32(resVN.Score)
-		}
+		if rank, isMru := GetMruRank(path); isMru {
+			// MRU files get high score combining recency and query match score
+			res.Score = 10000000 + (100-rank)*10000 + res.Score
+		} else {
+			var virtualMatchScore float32 = 0
+			vname := getVirtualName(path)
+			vnameChars := util.ToChars([]byte(vname))
+			if resVN, _ := fuzzyMatchV2Internal(caseSensitive, normalize, forward, &vnameChars, pattern, false, slab); resVN.Start >= 0 {
+				virtualMatchScore = float32(resVN.Score)
+			}
 
-		neuralScore := CalculateNeuralScore(path, float32(res.Score), virtualMatchScore)
-		res.Score = int(neuralScore * 1000000)
+			neuralScore := CalculateNeuralScore(path, float32(res.Score), virtualMatchScore)
+			res.Score = int(neuralScore * 5000000)
+		}
 		return res, pos
 	}
 

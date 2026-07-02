@@ -473,7 +473,7 @@ func GetMruRank(path string) (int, bool) {
 func getMruBoost(path string) int {
 	if rank, ok := GetMruRank(path); ok {
 		decay := 1.0 + float64(rank-1)*0.1
-		return int(15000.0 / decay)
+		return int(3000.0 / decay)
 	}
 	return 0
 }

@@ -1,6 +1,7 @@
 package algo
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -217,4 +218,79 @@ func TestLongStringWithNormalize(t *testing.T) {
 	}
 	unicodeString := string(bytes) + " Minímal example"
 	assertMatch2(t, FuzzyMatchV1, false, true, false, unicodeString, "minim", 30001, 30006, 140)
+}
+
+func TestSplitScoring(t *testing.T) {
+	Init("filename-first")
+	MruMap = make(map[string]int)
+
+	// Populate 100 MRU items
+	for i := 1; i <= 100; i++ {
+		MruMap[strings.ReplaceAll(fmt.Sprintf("app/workers/mru_file_%d.rb", i), "\\", "/")] = i
+	}
+
+	// Enable NeuralNet with a mock network
+	NeuralNet = &Network{
+		Weights: [][][]float32{
+			{
+				{0.1}, {0.1}, {0.1}, {0.1}, {0.1}, {0.1}, {0.1}, {0.1}, {0.1}, {0.1}, {0.1},
+			},
+		},
+		Biases: [][]float32{
+			{0.0},
+		},
+	}
+	defer func() {
+		NeuralNet = nil
+		MruMap = nil
+		Init("default")
+	}()
+
+	// 1. Test empty query scoring
+	chars1 := util.ToChars([]byte("  mru_file_1.rb  app/workers"))
+	res1, _ := FuzzyMatchV2(false, false, true, &chars1, []rune(""), false, nil)
+
+	chars2 := util.ToChars([]byte("  mru_file_2.rb  app/workers"))
+	res2, _ := FuzzyMatchV2(false, false, true, &chars2, []rune(""), false, nil)
+
+	charsNonMru := util.ToChars([]byte("  workspace_file.rb  app/workers"))
+	resNonMru, _ := FuzzyMatchV2(false, false, true, &charsNonMru, []rune(""), false, nil)
+
+	// Assertions for empty query:
+	// - MRU 1 score must be higher than MRU 2 score (since MRU 1 has higher recency, rank 1 < rank 2)
+	if res1.Score <= res2.Score {
+		t.Errorf("Empty query: Expected MRU 1 score (%d) > MRU 2 score (%d)", res1.Score, res2.Score)
+	}
+	// - MRU scores must be >= 10,000,000
+	if res2.Score < 10000000 {
+		t.Errorf("Empty query: Expected MRU 2 score (%d) >= 10000000", res2.Score)
+	}
+	// - Non-MRU score must be strictly less than 10,000,000
+	if resNonMru.Score >= 10000000 {
+		t.Errorf("Empty query: Expected Non-MRU score (%d) < 10000000", resNonMru.Score)
+	}
+
+	// 2. Test active query scoring
+	chars1_q := util.ToChars([]byte("  mru_file_1.rb  app/workers"))
+	res1_q, _ := FuzzyMatchV2(false, false, true, &chars1_q, []rune("file"), false, nil)
+
+	chars2_q := util.ToChars([]byte("  mru_file_2.rb  app/workers"))
+	res2_q, _ := FuzzyMatchV2(false, false, true, &chars2_q, []rune("file"), false, nil)
+
+	charsNonMru_q := util.ToChars([]byte("  workspace_file.rb  app/workers"))
+	resNonMru_q, _ := FuzzyMatchV2(false, false, true, &charsNonMru_q, []rune("file"), false, nil)
+
+	// Assertions with query:
+	// - MRU 1 score must be higher than MRU 2 score
+	if res1_q.Score <= res2_q.Score {
+		t.Errorf("Active query: Expected MRU 1 score (%d) > MRU 2 score (%d)", res1_q.Score, res2_q.Score)
+	}
+	// - MRU scores must be >= 10,000,000
+	if res2_q.Score < 10000000 {
+		t.Errorf("Active query: Expected MRU 2 score (%d) >= 10000000", res2_q.Score)
+	}
+	// - Non-MRU score must be strictly less than 10,000,000
+	if resNonMru_q.Score >= 10000000 {
+		t.Errorf("Active query: Expected Non-MRU score (%d) < 10000000", resNonMru_q.Score)
+	}
 }

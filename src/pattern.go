@@ -410,36 +410,51 @@ func (p *Pattern) MatchItem(item *Item, withPos bool, slab *util.Slab) (Result, 
 				for _, termSet := range p.termSets {
 					for _, term := range termSet {
 						if term.typ == termFuzzy && !term.inv {
-							pathChars := util.ToChars([]byte(path))
-							if res, pos := algo.FuzzyMatchV2Internal(term.caseSensitive, term.normalize, p.forward, &pathChars, term.text, true, slab); res.Start >= 0 {
+							filename := path[lenDir:]
+							filenameChars := util.ToChars([]byte(filename))
+							res, pos := algo.FuzzyMatchV2Internal(term.caseSensitive, term.normalize, p.forward, &filenameChars, term.text, true, slab)
+
+							termIsFilenameMatch := false
+							if res.Start >= 0 {
+								termIsFilenameMatch = true
+								isDirMatch = false
 								totalMatchScore += res.Score
 
-								termIsFilenameMatch := true
+								// Map pos back to full path
 								if pos != nil {
-									for _, val := range *pos {
-										if val < lenDir {
-											termIsFilenameMatch = false
-											isFilenameMatch = false
-										} else {
-											isDirMatch = false
+									for idx, val := range *pos {
+										(*pos)[idx] = val + lenDir
+									}
+								}
+							} else {
+								isFilenameMatch = false
+								pathChars := util.ToChars([]byte(path))
+								res, pos = algo.FuzzyMatchV2Internal(term.caseSensitive, term.normalize, p.forward, &pathChars, term.text, true, slab)
+								if res.Start >= 0 {
+									totalMatchScore += res.Score
+									if pos != nil {
+										for _, val := range *pos {
+											if val >= lenDir {
+												isDirMatch = false
+											}
 										}
 									}
 								}
+							}
 
-								// Check if sequential (consecutive matching)
-								isSequential := true
-								if pos != nil && len(*pos) > 1 {
-									for idx := 1; idx < len(*pos); idx++ {
-										if (*pos)[idx] != (*pos)[idx-1]+1 {
-											isSequential = false
-											break
-										}
+							// Check if sequential (consecutive matching)
+							isSequential := true
+							if pos != nil && len(*pos) > 1 {
+								for idx := 1; idx < len(*pos); idx++ {
+									if (*pos)[idx] != (*pos)[idx-1]+1 {
+										isSequential = false
+										break
 									}
 								}
+							}
 
-								if termIsFilenameMatch && isSequential {
-									sequentialBoost += 2000
-								}
+							if termIsFilenameMatch && isSequential {
+								sequentialBoost += 2000
 							}
 							break
 						}

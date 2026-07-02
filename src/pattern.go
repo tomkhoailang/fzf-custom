@@ -397,7 +397,7 @@ func (p *Pattern) matchChunk(chunk *Chunk, cachedBitmap *ChunkBitmap, slab *util
 // A zero-value Result (with item == nil) indicates no match.
 func (p *Pattern) MatchItem(item *Item, withPos bool, slab *util.Slab) (Result, []Offset, *[]int) {
 	if p.extended {
-		if offsets, bonus, pos := p.extendedMatch(item, withPos, slab); len(offsets) == len(p.termSets) {
+		if offsets, bonus, pos, termPositions, termScores := p.extendedMatch(item, withPos, slab); len(offsets) == len(p.termSets) {
 			finalScore := bonus
 			if algo.CurrentScheme == "filename-first" {
 				cache := algo.GetOrInitFfCache(&item.text)
@@ -405,76 +405,77 @@ func (p *Pattern) MatchItem(item *Item, withPos bool, slab *util.Slab) (Result, 
 				var totalMatchScore int
 				isFilenameMatch := true
 				isDirMatch := true
-				lenDir := cache.LenDir
 				sequentialBoost := 0
 
-				for _, termSet := range p.termSets {
-					for _, term := range termSet {
-						if term.typ == termFuzzy && !term.inv {
-							filename := path[lenDir:]
-							filenameChars := util.ToChars([]byte(filename))
-							res, pos := algo.FuzzyMatchV2Internal(term.caseSensitive, term.normalize, p.forward, &filenameChars, term.text, true, slab)
+				mruBoost := 0
+				if rank, ok := algo.GetMruRank(path); ok {
+					decay := 1.0 + float64(rank-1)*0.1
+					mruBoost = int(1500.0 / decay)
+				}
+				filenameLen := len(cache.Filename)
+				shortBonus := 500 - filenameLen
+				if shortBonus < 0 {
+					shortBonus = 0
+				}
 
-							termIsFilenameMatch := false
-							if res.Start >= 0 {
-								termIsFilenameMatch = true
-								isDirMatch = false
-								totalMatchScore += res.Score
-
-								// Map pos back to full path
-								if pos != nil {
-									for idx, val := range *pos {
-										(*pos)[idx] = val + lenDir
-									}
-								}
-							} else {
+				for termIdx, termPos := range termPositions {
+					termIsFilenameMatch := true
+					termIsDirMatch := true
+					if len(termPos) > 0 {
+						for _, val := range termPos {
+							if val >= cache.StartOfDir {
+								termIsFilenameMatch = false
 								isFilenameMatch = false
-								pathChars := util.ToChars([]byte(path))
-								res, pos = algo.FuzzyMatchV2Internal(term.caseSensitive, term.normalize, p.forward, &pathChars, term.text, true, slab)
-								if res.Start >= 0 {
-									totalMatchScore += res.Score
-									if pos != nil {
-										for _, val := range *pos {
-											if val >= lenDir {
-												isDirMatch = false
-											}
-										}
-									}
-								}
+							} else if val >= cache.StartOfFilename {
+								termIsDirMatch = false
+								isDirMatch = false
 							}
-
-							// Check if sequential (consecutive matching)
-							isSequential := true
-							if pos != nil && len(*pos) > 1 {
-								asc := true
-								desc := true
-								for idx := 1; idx < len(*pos); idx++ {
-									if (*pos)[idx] != (*pos)[idx-1]+1 {
-										asc = false
-									}
-									if (*pos)[idx] != (*pos)[idx-1]-1 {
-										desc = false
-									}
-								}
-								isSequential = asc || desc
-							}
-
-							if termIsFilenameMatch && isSequential {
-								sequentialBoost += 3000
-							}
-							break
 						}
+					}
+
+					termScore := termScores[termIdx]
+					termTierBase := 25000
+					if termIsFilenameMatch {
+						termTierBase = 40000
+					} else if termIsDirMatch {
+						termTierBase = 15000
+					}
+
+					termMatchScore := termScore - termTierBase - mruBoost - shortBonus
+					if termMatchScore < 0 {
+						termMatchScore = 0
+					}
+					totalMatchScore += termMatchScore
+
+					// Check if sequential (consecutive matching)
+					isSequential := true
+					if len(termPos) > 1 {
+						asc := true
+						desc := true
+						for idx := 1; idx < len(termPos); idx++ {
+							if termPos[idx] != termPos[idx-1]+1 {
+								asc = false
+							}
+							if termPos[idx] != termPos[idx-1]-1 {
+								desc = false
+							}
+						}
+						isSequential = asc || desc
+					}
+
+					if termIsFilenameMatch && isSequential {
+						sequentialBoost += 3000
 					}
 				}
 
 				if algo.NeuralNet != nil {
+					filenameBoost := 0
+					if isFilenameMatch {
+						filenameBoost = 15000
+					} else if !isDirMatch {
+						filenameBoost = 5000
+					}
 					if rank, isMru := algo.GetMruRank(path); isMru {
-						filenameBoost := 0
-						if isFilenameMatch {
-							filenameBoost = 15000
-						} else if !isDirMatch {
-							filenameBoost = 5000
-						}
 						finalScore = 35000 + (100-rank)*200 + totalMatchScore + filenameBoost + sequentialBoost
 					} else {
 						var totalVirtualMatchScore float32
@@ -494,17 +495,6 @@ func (p *Pattern) MatchItem(item *Item, withPos bool, slab *util.Slab) (Result, 
 						finalScore = int(neuralScore * 30000)
 					}
 				} else {
-					var mruBoost int
-					if rank, ok := algo.GetMruRank(path); ok {
-						decay := 1.0 + float64(rank-1)*0.1
-						mruBoost = int(1500.0 / decay)
-					}
-					filenameLen := len(path) - lenDir
-					shortBonus := 500 - filenameLen
-					if shortBonus < 0 {
-						shortBonus = 0
-					}
-
 					cappedMatchScore := totalMatchScore
 					if cappedMatchScore > 5000 {
 						cappedMatchScore = 5000
@@ -544,7 +534,7 @@ func (p *Pattern) basicMatch(item *Item, withPos bool, slab *util.Slab) (Offset,
 	return p.iter(algo.ExactMatchNaive, input, p.caseSensitive, p.normalize, p.forward, p.text, withPos, slab)
 }
 
-func (p *Pattern) extendedMatch(item *Item, withPos bool, slab *util.Slab) ([]Offset, int, *[]int) {
+func (p *Pattern) extendedMatch(item *Item, withPos bool, slab *util.Slab) ([]Offset, int, *[]int, [][]int, []int) {
 	var input []Token
 	if len(p.nth) == 0 {
 		input = []Token{{text: &item.text, prefixLength: 0}}
@@ -557,10 +547,17 @@ func (p *Pattern) extendedMatch(item *Item, withPos bool, slab *util.Slab) ([]Of
 	if withPos {
 		allPos = &[]int{}
 	}
+	var termPositions [][]int
+	var termScores []int
+	if withPos {
+		termPositions = make([][]int, 0, len(p.termSets))
+		termScores = make([]int, 0, len(p.termSets))
+	}
 	for _, termSet := range p.termSets {
 		var offset Offset
 		var currentScore int
 		matched := false
+		var matchedPos []int
 		for _, term := range termSet {
 			if term.typ == termPathFilter {
 				path := ExtractPathFromFormatted([]byte(item.text.ToString()))
@@ -585,9 +582,13 @@ func (p *Pattern) extendedMatch(item *Item, withPos bool, slab *util.Slab) ([]Of
 					matched = true
 					if withPos {
 						if pos != nil {
+							matchedPos = make([]int, len(*pos))
+							copy(matchedPos, *pos)
 							*allPos = append(*allPos, *pos...)
 						} else if off[0] < off[1] {
+							matchedPos = make([]int, off[1]-off[0])
 							for idx := off[0]; idx < off[1]; idx++ {
+								matchedPos[idx-off[0]] = int(idx)
 								*allPos = append(*allPos, int(idx))
 							}
 						}
@@ -609,9 +610,13 @@ func (p *Pattern) extendedMatch(item *Item, withPos bool, slab *util.Slab) ([]Of
 					matched = true
 					if withPos {
 						if pos != nil {
+							matchedPos = make([]int, len(*pos))
+							copy(matchedPos, *pos)
 							*allPos = append(*allPos, *pos...)
 						} else {
+							matchedPos = make([]int, off[1]-off[0])
 							for idx := off[0]; idx < off[1]; idx++ {
+								matchedPos[idx-off[0]] = int(idx)
 								*allPos = append(*allPos, int(idx))
 							}
 						}
@@ -627,9 +632,13 @@ func (p *Pattern) extendedMatch(item *Item, withPos bool, slab *util.Slab) ([]Of
 		if matched {
 			offsets = append(offsets, offset)
 			totalScore += currentScore
+			if withPos {
+				termPositions = append(termPositions, matchedPos)
+				termScores = append(termScores, currentScore)
+			}
 		}
 	}
-	return offsets, totalScore, allPos
+	return offsets, totalScore, allPos, termPositions, termScores
 }
 
 func (p *Pattern) transformInput(item *Item) []Token {

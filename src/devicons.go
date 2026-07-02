@@ -1143,6 +1143,7 @@ func pushMruFiles(cl *ChunkList) {
 	}
 	cwd, err := os.Getwd()
 	parts := strings.Split(mruEnv, ";")
+	pushedAny := false
 	for _, file := range parts {
 		if file == "" {
 			continue
@@ -1156,6 +1157,10 @@ func pushMruFiles(cl *ChunkList) {
 		
 		formatted := formatLineWithIcon([]byte(relFile))
 		cl.Push(formatted)
+		pushedAny = true
+	}
+	if pushedAny {
+		cl.Push([]byte("\x1b[38;5;244m── file results ──────────────────────────────────────\x1b[0m"))
 	}
 }
 

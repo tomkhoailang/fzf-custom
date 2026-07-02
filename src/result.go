@@ -4,6 +4,7 @@ import (
 	"math"
 	"slices"
 	"sort"
+	"strings"
 	"unicode"
 
 	"github.com/junegunn/fzf/src/algo"
@@ -117,6 +118,61 @@ func buildResultFromBounds(item *Item, score int, minBegin, minEnd, maxEnd int, 
 		if mruRank, ok := algo.MruMap[path]; ok {
 			decay := 1.0 + float64(mruRank-1)*0.1
 			score += int(10000.0 / decay)
+		}
+	}
+
+	if algo.CurrentScheme == "filename-first" {
+		if strings.Contains(item.text.ToString(), "── file results") {
+			score = 32767
+		} else {
+			// Find clean path
+			text := item.text.ToString()
+			firstSep := -1
+			secondSep := -1
+			for i := 0; i < len(text)-1; i++ {
+				if text[i] == ' ' && text[i+1] == ' ' {
+					if firstSep == -1 {
+						firstSep = i
+					} else {
+						secondSep = i
+						break
+					}
+				}
+			}
+			var filename, dir string
+			if firstSep >= 0 && secondSep >= 0 {
+				filename = text[firstSep+2 : secondSep]
+				dir = text[secondSep+2:]
+			} else if firstSep >= 0 {
+				filename = text[firstSep+2:]
+			} else {
+				filename = text
+			}
+
+			// Clean ANSI codes from dir
+			cleanDir := ""
+			for i := 0; i < len(dir); i++ {
+				if dir[i] == '\033' {
+					for i < len(dir) && dir[i] != 'm' {
+						i++
+					}
+					continue
+				}
+				cleanDir += string(dir[i])
+			}
+			var path string
+			if cleanDir != "" {
+				path = cleanDir + "/" + filename
+			} else {
+				path = filename
+			}
+
+			_, isMru := algo.MruMap[path]
+			if isMru {
+				score = 32768 + (score / 2)
+			} else {
+				score = (score * 32766) / 65535
+			}
 		}
 	}
 

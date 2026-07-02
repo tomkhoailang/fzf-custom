@@ -445,12 +445,17 @@ func (p *Pattern) MatchItem(item *Item, withPos bool, slab *util.Slab) (Result, 
 							// Check if sequential (consecutive matching)
 							isSequential := true
 							if pos != nil && len(*pos) > 1 {
+								asc := true
+								desc := true
 								for idx := 1; idx < len(*pos); idx++ {
 									if (*pos)[idx] != (*pos)[idx-1]+1 {
-										isSequential = false
-										break
+										asc = false
+									}
+									if (*pos)[idx] != (*pos)[idx-1]-1 {
+										desc = false
 									}
 								}
+								isSequential = asc || desc
 							}
 
 							if termIsFilenameMatch && isSequential {

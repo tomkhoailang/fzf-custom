@@ -699,7 +699,7 @@ func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forwa
 			if fnPos != nil {
 				pathPos := make([]int, len(*fnPos))
 				for idx, p := range *fnPos {
-					pathPos[idx] = lenDir + 1 + p
+					pathPos[idx] = lenDir + p
 				}
 				pos = &pathPos
 			}
@@ -709,12 +709,10 @@ func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forwa
 	if pos != nil {
 		mappedPos := make([]int, len(*pos))
 		for idx, p := range *pos {
-			if p < lenDir {
-				mappedPos[idx] = startOfDir + p
-			} else if p > lenDir {
-				mappedPos[idx] = startOfFilename + (p - lenDir - 1)
+			if p >= lenDir {
+				mappedPos[idx] = startOfFilename + (p - lenDir)
 			} else {
-				mappedPos[idx] = startOfDir
+				mappedPos[idx] = startOfDir + p
 			}
 		}
 		pos = &mappedPos

@@ -450,20 +450,13 @@ func debugV2(T []rune, pattern []rune, F []int32, lastIdx int, H []int16, C []in
 	}
 }
 
-func getMruBoost(filenameChars util.Chars, startOfDir int, endIdx int, input *util.Chars) int {
+func getMruBoost(path string) int {
 	if len(MruMap) == 0 {
 		return 0
 	}
-	var path string
-	if startOfDir < endIdx {
-		dirChars := input.Slice(startOfDir, endIdx)
-		path = dirChars.ToString() + "/" + filenameChars.ToString()
-	} else {
-		path = filenameChars.ToString()
-	}
 	if mruRank, ok := MruMap[path]; ok {
 		decay := 1.0 + float64(mruRank-1)*0.1
-		return int(10000.0 / decay)
+		return int(15000.0 / decay)
 	}
 	return 0
 }
@@ -567,7 +560,27 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 	dir := ""
 	if startOfDir < endOfLine {
 		dirChars := input.Slice(startOfDir, endOfLine)
-		dir = (&dirChars).ToString()
+		rawDir := (&dirChars).ToString()
+		// Strip ANSI escape codes from dir — the formatted line stores dir with
+		// dim ANSI codes (e.g. "\x1b[38;5;244;3mapp/workers\x1b[0m") which would
+		// corrupt the path used for MruMap lookups and fuzzy matching.
+		var cleanDir []byte
+		inEsc := false
+		for i := 0; i < len(rawDir); i++ {
+			b := rawDir[i]
+			if b == '\x1b' {
+				inEsc = true
+				continue
+			}
+			if inEsc {
+				if b == 'm' {
+					inEsc = false
+				}
+				continue
+			}
+			cleanDir = append(cleanDir, b)
+		}
+		dir = string(cleanDir)
 	}
 	path := filename
 	if dir != "" {
@@ -583,7 +596,7 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 			neuralScore := CalculateNeuralScore(path, 0, 0)
 			score = int(neuralScore * 1000000)
 		} else {
-			mruBoost := getMruBoost(filenameChars, startOfDir, endOfLine, input)
+			mruBoost := getMruBoost(path)
 			shortBonus := 500 - filenameLen
 			if shortBonus < 0 {
 				shortBonus = 0
@@ -612,6 +625,28 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 			} else {
 				isFilenameMatch = false
 				isDirMatch = false
+			}
+		}
+	}
+
+	// When the full-path match greedily consumed the query in the directory
+	// (e.g. query "worker" matched in "workers/" dir instead of "dast_worker.rb"),
+	// retry matching against just the filename. If the filename alone matches,
+	// reclassify as a filename match so it gets the higher tier score.
+	if !isFilenameMatch && filenameLen >= len(pattern) {
+		fnRes, fnPos := fuzzyMatchV2Internal(caseSensitive, normalize, forward, &filenameChars, pattern, withPos, slab)
+		if fnRes.Start >= 0 {
+			isFilenameMatch = true
+			isDirMatch = false
+			res.Score = fnRes.Score
+			// Convert filename-local positions to path-relative positions
+			// so the existing mapping code below handles them correctly.
+			if fnPos != nil {
+				pathPos := make([]int, len(*fnPos))
+				for idx, p := range *fnPos {
+					pathPos[idx] = lenDir + 1 + p // +1 for the "/" separator
+				}
+				pos = &pathPos
 			}
 		}
 	}
@@ -664,7 +699,7 @@ func FuzzyMatchV2FilenameFirst(caseSensitive bool, normalize bool, forward bool,
 		matchScore = 5000
 	}
 
-	mruBoost := getMruBoost(filenameChars, startOfDir, endOfLine, input)
+	mruBoost := getMruBoost(path)
 	shortBonus := 500 - filenameLen
 	if shortBonus < 0 {
 		shortBonus = 0

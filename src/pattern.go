@@ -27,6 +27,7 @@ const (
 	termPrefix
 	termSuffix
 	termEqual
+	termPathFilter
 )
 
 type term struct {
@@ -61,7 +62,7 @@ type Pattern struct {
 	delimiter     Delimiter
 	nth           []Range
 	revision      revision
-	procFun       [6]algo.Algo
+	procFun       [7]algo.Algo
 	cache         *ChunkCache
 	denylist      map[int32]struct{}
 	startIndex    int32
@@ -196,6 +197,11 @@ func parseTerms(fuzzy bool, caseMode Case, normalize bool, str string) []termSet
 		if strings.HasPrefix(text, "!") {
 			inv = true
 			typ = termExact
+			text = text[1:]
+		}
+
+		if strings.HasPrefix(text, ":") {
+			typ = termPathFilter
 			text = text[1:]
 		}
 
@@ -431,28 +437,66 @@ func (p *Pattern) extendedMatch(item *Item, withPos bool, slab *util.Slab) ([]Of
 		var currentScore int
 		matched := false
 		for _, term := range termSet {
-			pfun := p.procFun[term.typ]
-			off, score, pos := p.iter(pfun, input, term.caseSensitive, term.normalize, p.forward, term.text, withPos, slab)
-			if sidx := off[0]; sidx >= 0 {
-				if term.inv {
-					continue
+			if term.typ == termPathFilter {
+				path := ExtractPathFromFormatted([]byte(item.text.ToString()))
+				termStr := string(term.text)
+				if !term.caseSensitive {
+					path = strings.ToLower(path)
+					termStr = strings.ToLower(termStr)
 				}
-				offset, currentScore = off, score
-				matched = true
-				if withPos {
-					if pos != nil {
-						*allPos = append(*allPos, *pos...)
-					} else {
-						for idx := off[0]; idx < off[1]; idx++ {
-							*allPos = append(*allPos, int(idx))
+				idx := strings.Index(path, termStr)
+				if idx >= 0 {
+					if term.inv {
+						continue
+					}
+					off := Offset{0, 0}
+					var pos *[]int
+					res, pPos := algo.ExactMatchNaive(term.caseSensitive, term.normalize, p.forward, &item.text, term.text, withPos, slab)
+					if res.Start >= 0 {
+						off = Offset{int32(res.Start), int32(res.End)}
+						pos = pPos
+					}
+					offset, currentScore = off, 100
+					matched = true
+					if withPos {
+						if pos != nil {
+							*allPos = append(*allPos, *pos...)
+						} else if off[0] < off[1] {
+							for idx := off[0]; idx < off[1]; idx++ {
+								*allPos = append(*allPos, int(idx))
+							}
 						}
 					}
+					break
+				} else if term.inv {
+					offset, currentScore = Offset{0, 0}, 0
+					matched = true
+					continue
 				}
-				break
-			} else if term.inv {
-				offset, currentScore = Offset{0, 0}, 0
-				matched = true
-				continue
+			} else {
+				pfun := p.procFun[term.typ]
+				off, score, pos := p.iter(pfun, input, term.caseSensitive, term.normalize, p.forward, term.text, withPos, slab)
+				if sidx := off[0]; sidx >= 0 {
+					if term.inv {
+						continue
+					}
+					offset, currentScore = off, score
+					matched = true
+					if withPos {
+						if pos != nil {
+							*allPos = append(*allPos, *pos...)
+						} else {
+							for idx := off[0]; idx < off[1]; idx++ {
+								*allPos = append(*allPos, int(idx))
+							}
+						}
+					}
+					break
+				} else if term.inv {
+					offset, currentScore = Offset{0, 0}, 0
+					matched = true
+					continue
+				}
 			}
 		}
 		if matched {

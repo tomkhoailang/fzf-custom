@@ -316,3 +316,65 @@ func BenchmarkWithCache(b *testing.B) {
 		}
 	})
 }
+
+func TestPathFilter(t *testing.T) {
+	algo.Init("filename-first")
+	defer algo.Init("default")
+
+	// 1. Build a pattern containing a path filter term (e.g. ":app/workers")
+	pattern := buildPattern(true, algo.FuzzyMatchV2, true, CaseSmart, false, true, true, true, []Range{}, Delimiter{}, []rune(":app/workers"))
+
+	if len(pattern.termSets) != 1 || len(pattern.termSets[0]) != 1 {
+		t.Fatalf("Expected 1 term set, got %d", len(pattern.termSets))
+	}
+	term := pattern.termSets[0][0]
+	if term.typ != termPathFilter {
+		t.Errorf("Expected term type termPathFilter, got %d", term.typ)
+	}
+	if string(term.text) != "app/workers" {
+		t.Errorf("Expected term text 'app/workers', got %q", string(term.text))
+	}
+
+	// 2. Test matching and highlighting on an item
+	itemMatch := &Item{text: util.ToChars([]byte("  dast_worker.rb  app/workers"))}
+	resMatch, _, pos := pattern.MatchItem(itemMatch, true, slab)
+	if resMatch.item == nil {
+		t.Fatalf("Expected item to match")
+	}
+
+	// Check highlighting positions: "app/workers" is at the very end of the string
+	// "  dast_worker.rb  app/workers"
+	// Length of "  dast_worker.rb  " is 3 + 2 + 14 + 2 = 21 (wait, in bytes: "" is 3 bytes, "  " is 2 bytes, "dast_worker.rb" is 14 bytes, "  " is 2 bytes. Total 21 bytes. In runes: "" is 1 rune, "  " is 2 runes, "dast_worker.rb" is 14 runes, "  " is 2 runes. Total 19 runes.)
+	// Let's assert that pos is not nil and contains the correct highlighted indices!
+	if pos == nil || len(*pos) == 0 {
+		t.Errorf("Expected highlighting positions to be populated, got nil or empty")
+	} else {
+		// "app/workers" has 11 runes.
+		if len(*pos) != 11 {
+			t.Errorf("Expected 11 highlighted runes, got %d", len(*pos))
+		}
+	}
+
+	itemNoMatch := &Item{text: util.ToChars([]byte("  dast_worker.rb  app/controllers"))}
+	resNoMatch, _, _ := pattern.MatchItem(itemNoMatch, true, slab)
+	if resNoMatch.item != nil {
+		t.Errorf("Expected item not to match")
+	}
+
+	// 3. Test inverse path filter term (e.g. "!:app/workers")
+	patternInv := buildPattern(true, algo.FuzzyMatchV2, true, CaseSmart, false, true, true, true, []Range{}, Delimiter{}, []rune("!:app/workers"))
+	termInv := patternInv.termSets[0][0]
+	if !termInv.inv || termInv.typ != termPathFilter {
+		t.Errorf("Expected term type termPathFilter with inv = true")
+	}
+
+	resMatchInv, _, _ := patternInv.MatchItem(itemNoMatch, true, slab) // Should match because it does not contain app/workers
+	if resMatchInv.item == nil {
+		t.Errorf("Expected item to match (inverse)")
+	}
+
+	resNoMatchInv, _, _ := patternInv.MatchItem(itemMatch, true, slab) // Should NOT match because it contains app/workers
+	if resNoMatchInv.item != nil {
+		t.Errorf("Expected item not to match (inverse)")
+	}
+}

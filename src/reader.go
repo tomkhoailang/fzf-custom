@@ -411,3 +411,12 @@ func (r *Reader) readFromCommand(command string, environ []string, signalReady f
 	r.feed(execOut)
 	return exec.Wait() == nil
 }
+
+// PushExternal allows an external goroutine to push an item using the same
+// pusher as the reader and signal EvtReadNew so the matcher picks it up.
+// Safe to call concurrently with the reader's own goroutine.
+func (r *Reader) PushExternal(data []byte) {
+	if r.pusher(data) {
+		atomic.StoreInt32(&r.event, int32(EvtReadNew))
+	}
+}

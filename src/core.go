@@ -2,11 +2,14 @@
 package fzf
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"maps"
 	"math"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -276,11 +279,29 @@ func Run(opts *Options) (int, error) {
 	streamingFilter := opts.Filter != nil && !sort && !opts.Tac && !opts.Sync && opts.Bench == 0
 	var reader *Reader
 	var ingestionStart time.Time
+	// Resolve FZF_PROJECT_CWD once for the stat check below.
+	projectCwd := os.Getenv("FZF_PROJECT_CWD")
+
 	if !streamingFilter {
 		reader = NewReader(func(data []byte) bool {
 			if opts.Scheme == "filename-first" {
 				if isMruFile(data) {
 					return true
+				}
+				// Drop files that no longer exist on disk (e.g. deleted files
+				// still tracked in the git index). Relative paths are resolved
+				// against FZF_PROJECT_CWD set by neural-open's fzf.lua.
+				if projectCwd != "" {
+					rawPath := string(data)
+					var absPath string
+					if filepath.IsAbs(rawPath) {
+						absPath = rawPath
+					} else {
+						absPath = filepath.Join(projectCwd, rawPath)
+					}
+					if _, err := os.Stat(absPath); err != nil {
+						return false
+					}
 				}
 				data = formatLineWithDummyIcon(data)
 			}
@@ -294,6 +315,33 @@ func Run(opts *Options) (int, error) {
 		}
 		go reader.ReadSource(opts.Input, opts.WalkerRoot, opts.WalkerOpts, opts.WalkerSkip, initialReload, initialEnv, readyChan)
 		<-readyChan
+
+		// Phase 2 (Idea D): concurrently stream untracked files into the picker.
+		// Runs in parallel with the phase-1 git ls-files command so the picker
+		// opens instantly (~22ms) with all tracked files while untracked files
+		// trickle in as git finds them (~200ms later). Only active under
+		// --scheme filename-first (neural-open path) when FZF_PROJECT_CWD is set.
+		if opts.Scheme == "filename-first" && projectCwd != "" {
+			go func() {
+				cmd := exec.Command("git", "ls-files", "--others", "--exclude-standard")
+				cmd.Dir = projectCwd
+				stdout, err := cmd.StdoutPipe()
+				if err != nil {
+					return
+				}
+				if err := cmd.Start(); err != nil {
+					return
+				}
+				scanner := bufio.NewScanner(stdout)
+				for scanner.Scan() {
+					line := scanner.Bytes()
+					if len(line) > 0 {
+						reader.PushExternal(append([]byte(nil), line...))
+					}
+				}
+				cmd.Wait()
+			}()
+		}
 	}
 
 	// Matcher

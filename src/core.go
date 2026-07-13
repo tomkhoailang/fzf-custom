@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -316,31 +317,45 @@ func Run(opts *Options) (int, error) {
 		go reader.ReadSource(opts.Input, opts.WalkerRoot, opts.WalkerOpts, opts.WalkerSkip, initialReload, initialEnv, readyChan)
 		<-readyChan
 
-		// Phase 2 (Idea D): concurrently stream untracked files into the picker.
-		// Runs in parallel with the phase-1 git ls-files command so the picker
-		// opens instantly (~22ms) with all tracked files while untracked files
-		// trickle in as git finds them (~200ms later). Only active under
-		// --scheme filename-first (neural-open path) when FZF_PROJECT_CWD is set.
+		// Phase 2: untracked files (git ls-files --others --exclude-standard).
+		// Only active under --scheme filename-first with FZF_PROJECT_CWD set.
+		//
+		// Cache-warm path (FZF_UNTRACKED_FILES set by Lua): push items
+		// synchronously at startup — instant, no subprocess.
+		//
+		// Cache-cold path (env var empty): goroutine streams items as git finds
+		// them (~200ms in background). Picker is interactive from phase-1 (22ms).
 		if opts.Scheme == "filename-first" && projectCwd != "" {
-			go func() {
-				cmd := exec.Command("git", "ls-files", "--others", "--exclude-standard")
-				cmd.Dir = projectCwd
-				stdout, err := cmd.StdoutPipe()
-				if err != nil {
-					return
-				}
-				if err := cmd.Start(); err != nil {
-					return
-				}
-				scanner := bufio.NewScanner(stdout)
-				for scanner.Scan() {
-					line := scanner.Bytes()
-					if len(line) > 0 {
-						reader.PushExternal(append([]byte(nil), line...))
+			untrackedEnv := os.Getenv("FZF_UNTRACKED_FILES")
+			if untrackedEnv != "" {
+				// Cache hit: push all items synchronously.
+				for _, item := range strings.Split(untrackedEnv, ";") {
+					if item != "" {
+						reader.PushExternal([]byte(item))
 					}
 				}
-				cmd.Wait()
-			}()
+			} else {
+				// Cache cold: stream via goroutine, result cached by Lua for next open.
+				go func() {
+					cmd := exec.Command("git", "ls-files", "--others", "--exclude-standard")
+					cmd.Dir = projectCwd
+					stdout, err := cmd.StdoutPipe()
+					if err != nil {
+						return
+					}
+					if err := cmd.Start(); err != nil {
+						return
+					}
+					scanner := bufio.NewScanner(stdout)
+					for scanner.Scan() {
+						line := scanner.Bytes()
+						if len(line) > 0 {
+							reader.PushExternal(append([]byte(nil), line...))
+						}
+					}
+					cmd.Wait()
+				}()
+			}
 		}
 	}
 

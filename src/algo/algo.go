@@ -731,14 +731,43 @@ func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forwa
 		res.End = maxP + 1
 	}
 
-	if NeuralNet != nil && !bypassNeural {
-		if rank, isMru := GetMruRank(path); isMru {
-			filenameBoost := 0
-			if isFilenameMatch {
-				filenameBoost = 15000
-			} else if !isDirMatch {
-				filenameBoost = 5000
+	hasSlash := false
+	for _, r := range pattern {
+		if r == '/' || r == '\\' {
+			hasSlash = true
+			break
+		}
+	}
+
+	isSequential := true
+	if pos != nil && len(*pos) > 1 {
+		pSlice := *pos
+		asc := true
+		desc := true
+		for idx := 1; idx < len(pSlice); idx++ {
+			if pSlice[idx] != pSlice[idx-1]+1 {
+				asc = false
 			}
+			if pSlice[idx] != pSlice[idx-1]-1 {
+				desc = false
+			}
+		}
+		isSequential = asc || desc
+	}
+
+	if NeuralNet != nil && !bypassNeural {
+		filenameBoost := 0
+		if isFilenameMatch {
+			filenameBoost = 15000
+		} else if hasSlash {
+			filenameBoost = 10000
+		} else if isDirMatch && isSequential {
+			filenameBoost = 8000
+		} else if !isDirMatch && isSequential {
+			filenameBoost = 5000
+		}
+
+		if rank, isMru := GetMruRank(path); isMru {
 			res.Score = 35000 + (100-rank)*200 + res.Score + filenameBoost
 		} else {
 			var virtualMatchScore float32 = 0
@@ -749,7 +778,7 @@ func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forwa
 			}
 
 			neuralScore := CalculateNeuralScore(path, float32(res.Score), virtualMatchScore)
-			res.Score = int(neuralScore * 30000)
+			res.Score = int(neuralScore*30000) + filenameBoost
 		}
 		return res, pos
 	}
@@ -768,6 +797,9 @@ func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forwa
 
 	if isFilenameMatch {
 		score = 40000 + matchScore + mruBoost + shortBonus
+		if isSequential {
+			score += 3000
+		}
 		patLen := len(pattern)
 		if patLen <= filenameLen {
 			isPrefix := true
@@ -776,17 +808,31 @@ func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forwa
 				for j := 0; j < patLen; j++ {
 					fc := rune(slice[j])
 					pc := pattern[j]
-					if fc >= 'A' && fc <= 'Z' { fc += 32 }
-					if pc >= 'A' && pc <= 'Z' { pc += 32 }
-					if fc != pc { isPrefix = false; break }
+					if fc >= 'A' && fc <= 'Z' {
+						fc += 32
+					}
+					if pc >= 'A' && pc <= 'Z' {
+						pc += 32
+					}
+					if fc != pc {
+						isPrefix = false
+						break
+					}
 				}
 			} else {
 				for j := 0; j < patLen; j++ {
 					fc := cache.FilenameChars.Get(j)
 					pc := pattern[j]
-					if fc >= 'A' && fc <= 'Z' { fc += 32 }
-					if pc >= 'A' && pc <= 'Z' { pc += 32 }
-					if fc != pc { isPrefix = false; break }
+					if fc >= 'A' && fc <= 'Z' {
+						fc += 32
+					}
+					if pc >= 'A' && pc <= 'Z' {
+						pc += 32
+					}
+					if fc != pc {
+						isPrefix = false
+						break
+					}
 				}
 			}
 			if isPrefix {
@@ -797,9 +843,22 @@ func fuzzyMatchV2FilenameFirstInternal(caseSensitive bool, normalize bool, forwa
 			}
 		}
 	} else if isDirMatch {
-		score = 15000 + matchScore + mruBoost + shortBonus
+		if isSequential {
+			score = 30000 + matchScore + mruBoost + shortBonus + 3000
+		} else {
+			score = 15000 + matchScore + mruBoost + shortBonus
+		}
 	} else {
-		score = 25000 + matchScore + mruBoost + shortBonus
+		if hasSlash {
+			score = 35000 + matchScore + mruBoost + shortBonus
+			if isSequential {
+				score += 3000
+			}
+		} else if isSequential {
+			score = 25000 + matchScore + mruBoost + shortBonus
+		} else {
+			score = 12000 + matchScore + mruBoost + shortBonus
+		}
 	}
 
 	if score > 65535 {

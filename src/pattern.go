@@ -421,6 +421,19 @@ func (p *Pattern) MatchItem(item *Item, withPos bool, slab *util.Slab) (Result, 
 					shortBonus = 0
 				}
 
+				hasSlash := false
+				for _, termSet := range p.termSets {
+					for _, term := range termSet {
+						for _, r := range term.text {
+							if r == '/' || r == '\\' {
+								hasSlash = true
+								break
+							}
+						}
+					}
+				}
+
+				allSequential := true
 				for termIdx, termPos := range termPositions {
 					termIsFilenameMatch := true
 					termIsDirMatch := true
@@ -435,20 +448,6 @@ func (p *Pattern) MatchItem(item *Item, withPos bool, slab *util.Slab) (Result, 
 							}
 						}
 					}
-
-					termScore := termScores[termIdx]
-					termTierBase := 25000
-					if termIsFilenameMatch {
-						termTierBase = 40000
-					} else if termIsDirMatch {
-						termTierBase = 15000
-					}
-
-					termMatchScore := termScore - termTierBase - mruBoost - shortBonus
-					if termMatchScore < 0 {
-						termMatchScore = 0
-					}
-					totalMatchScore += termMatchScore
 
 					// Check if sequential (consecutive matching)
 					isSequential := true
@@ -465,6 +464,35 @@ func (p *Pattern) MatchItem(item *Item, withPos bool, slab *util.Slab) (Result, 
 						}
 						isSequential = asc || desc
 					}
+					if !isSequential {
+						allSequential = false
+					}
+
+					termScore := termScores[termIdx]
+					termTierBase := 12000
+					if termIsFilenameMatch {
+						termTierBase = 40000
+					} else if termIsDirMatch {
+						if isSequential {
+							termTierBase = 30000
+						} else {
+							termTierBase = 15000
+						}
+					} else {
+						if hasSlash {
+							termTierBase = 35000
+						} else if isSequential {
+							termTierBase = 25000
+						} else {
+							termTierBase = 12000
+						}
+					}
+
+					termMatchScore := termScore - termTierBase - mruBoost - shortBonus
+					if termMatchScore < 0 {
+						termMatchScore = 0
+					}
+					totalMatchScore += termMatchScore
 
 					if termIsFilenameMatch && isSequential {
 						sequentialBoost += 3000
@@ -475,7 +503,11 @@ func (p *Pattern) MatchItem(item *Item, withPos bool, slab *util.Slab) (Result, 
 					filenameBoost := 0
 					if isFilenameMatch {
 						filenameBoost = 15000
-					} else if !isDirMatch {
+					} else if hasSlash {
+						filenameBoost = 10000
+					} else if isDirMatch && allSequential {
+						filenameBoost = 8000
+					} else if !isDirMatch && allSequential {
 						filenameBoost = 5000
 					}
 					if rank, isMru := algo.GetMruRank(path); isMru {
@@ -495,7 +527,7 @@ func (p *Pattern) MatchItem(item *Item, withPos bool, slab *util.Slab) (Result, 
 							}
 						}
 						neuralScore := algo.CalculateNeuralScore(path, float32(totalMatchScore), totalVirtualMatchScore)
-						finalScore = int(neuralScore * 30000)
+						finalScore = int(neuralScore*30000) + filenameBoost
 					}
 				} else {
 					cappedMatchScore := totalMatchScore
@@ -506,9 +538,19 @@ func (p *Pattern) MatchItem(item *Item, withPos bool, slab *util.Slab) (Result, 
 					if isFilenameMatch {
 						finalScore = 40000 + cappedMatchScore + mruBoost + shortBonus + sequentialBoost
 					} else if isDirMatch {
-						finalScore = 15000 + cappedMatchScore + mruBoost + shortBonus
+						if allSequential {
+							finalScore = 30000 + cappedMatchScore + mruBoost + shortBonus + 3000
+						} else {
+							finalScore = 15000 + cappedMatchScore + mruBoost + shortBonus
+						}
 					} else {
-						finalScore = 25000 + cappedMatchScore + mruBoost + shortBonus + (sequentialBoost / 2)
+						if hasSlash {
+							finalScore = 35000 + cappedMatchScore + mruBoost + shortBonus + sequentialBoost
+						} else if allSequential {
+							finalScore = 25000 + cappedMatchScore + mruBoost + shortBonus + (sequentialBoost / 2)
+						} else {
+							finalScore = 12000 + cappedMatchScore + mruBoost + shortBonus
+						}
 					}
 				}
 			}
